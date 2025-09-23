@@ -1,0 +1,80 @@
+## KrakTAK 9.0.0
+
+- Merged ADSBXCOT functionality into KrakTAK. 
+- Merged StratuxCOT functionality into KrakTAK.
+- Code fixes & documentation improvements.
+- Remove Python 3.6 support.
+- Removed legacy feed url parameters. Only use FEED_URL going forward.
+- Renamed _aircotx_ CoT Element to __adsb.
+- Added _radio CoT Element with SIGINT data (when available).
+- Fixed #49: Windows MIME Type error.
+- Fixed #26: Added Dockerfile for Docker support (Thanks @chriselsen)
+- Fixed #43: Inotify file moved, reading stops.
+- Updated Github Workflows.
+- Major version bump from 8.0 to 9.0.
+- Moved kraktak module to src/ directory.
+- Moved VERSION to flat-file.
+- Refactored handle_data to split out parsing fuctions.
+- Added Logging to functions.
+- 
+
+## KrakTAK 8.0.2
+
+Happy Summer Solstice!
+
+- Rewrote GitHub actions, moved most logic to shell script and Makefile.
+- Renamed Debian package from python3-kraktak to kraktak.
+- Standardized Makefile for all PyTAK based programs.
+- Cleaned, simplified and expanded documentation.
+- Created Makefile jobs for Debian packaging and PyTAK customization.
+- Moved all media to media sub directory under docs/.
+- Converted README.rst to README.md.
+- Style & Linting of code.
+- Removed support for Python 3.6.
+- Removed support for DUMP1090_URL configuration parameter.
+- Added Debian service: /lib/systemd/system/kraktak.service
+- Added Debian conffile: /etc/default/kraktak
+- Added Debian postinst with service config, debug and startup instructions.
+- Added with_asyncinotify as an optional extra.
+
+## KrakTAK 7.0.1
+
+- Fixes #42: KrakTAK CoT Events are not showing up in iTAK.
+
+## KrakTAK 7.0.0
+
+- New for 2024!
+- Fixed formatting of CHANGELOG.md
+- Fixes #28: COT_STALE in documentation.
+- Fixes #31: Debian package build is broken.
+- Fixes #37: Move RTFD docs over to Markdown.
+- Fixes #38: Don't discard ImportError exception.
+- Fixes #39: Move CoT generation to PyTAK's `gen_cot_xml()` function.
+- Fixes #40: Add CoT `access` attribute.
+
+## KrakTAK 6.1.0
+
+Added optional altitude filters: ALT_UPPER, ALT_LOWER:
+- ALT_UPPER: Upper Altitude Limit, geometric (GNSS / INS) altitude in feet referenced to the WGS84 ellipsoid.
+- ALT_LOWER: Lower Altitude Limit, same ref as ALT_UPPER.
+
+## KrakTAK 6.0.0
+
+Improved support for AirTAK.
+- Added a Read the Docs documentation site: https://kraktak.readthedocs.io
+- Added ability to read file:// URLs, including reading aircraft.json from local fs.
+- Replaced setup.py metadata with setup.cfg.
+- Code cleanup.
+
+## KrakTAK 5.1.2
+
+- Fixed #17: Incorrect course/track for some dump1090 feeds. Thanks @dnlbaldwin
+- Code cleanup.
+
+## KrakTAK 5.1.1
+
+Adding CoT XML Declaration to output CoT.
+
+## KrakTAK 5.0.5
+
+Updated adsbexchange.com Raspberry Pi installation instructions.
