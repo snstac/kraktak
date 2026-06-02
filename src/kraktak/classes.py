@@ -21,7 +21,7 @@
 import asyncio
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -29,6 +29,16 @@ import aiohttp
 import pytak
 
 import kraktak
+from kraktak.config_loader import (
+    KrakenServerConfig,
+    load_kraken_servers,
+    load_runtime_document,
+    merge_server_config,
+    runtime_path_from_config,
+)
+from kraktak.gps import get_gps_position
+from kraktak.multicast import get_mirror
+from kraktak.telemetry import STORE
 
 
 @dataclass
@@ -54,10 +64,7 @@ class DOAValues:
 
 
 def parse_doa_csv(line: str) -> Optional[DOAValues]:
-    """Parse one CSV line of the KrakenSDR "Kraken App" DOA export.
-
-    Returns ``None`` if the line is empty or malformed.
-    """
+    """Parse one CSV line of the KrakenSDR "Kraken App" DOA export."""
     line = (line or "").strip()
     if not line or "," not in line:
         return None
@@ -106,15 +113,24 @@ def settings_url_from_feed(feed_url: str) -> str:
 
 
 class KrakTAKWorker(pytak.QueueWorker):
-    """Poll the KrakenSDR DOA feed, convert to CoT, and enqueue for transmission."""
+    """Poll one or more KrakenSDR DOA feeds, convert to CoT, enqueue for TAK."""
 
     def __init__(self, queue, config) -> None:
         super().__init__(queue, config)
         self.session: Optional[aiohttp.ClientSession] = None
-        self._settings_position = None  # cached (lat, lon, station) fallback
+        self._settings_cache: Dict[str, Optional[Tuple[float, float, str]]] = {}
+        self._runtime_overlay: dict = {}
+        self._mirror = get_mirror(config)
 
-    async def _fetch_settings_position(self, feed_url: str):
-        """Fetch lat/lon/station from settings.json as a position fallback."""
+    async def put_queue(self, data: bytes) -> None:
+        """Transmit via PyTAK and optionally mirror to ATAK multicast."""
+        await super().put_queue(data)
+        if self._mirror:
+            await self._mirror.send(data)
+
+    async def _fetch_settings_position(
+        self, feed_url: str
+    ) -> Optional[Tuple[float, float, str]]:
         if self.session is None or self.session.closed:
             return None
         url = settings_url_from_feed(feed_url)
@@ -134,85 +150,150 @@ class KrakTAKWorker(pytak.QueueWorker):
             return None
         return (float(lat), float(lon), str(data.get("station_id", "")))
 
-    async def _apply_position_fallback(self, doa: DOAValues, feed_url: str) -> None:
-        """Backfill missing/zero position from settings.json (cached)."""
+    async def _apply_position_fallback(
+        self, doa: DOAValues, feed_url: str, cfg: dict
+    ) -> None:
         if doa.latitude not in (None, 0.0) and doa.longitude not in (None, 0.0):
             return
-        if self._settings_position is None:
-            self._settings_position = await self._fetch_settings_position(feed_url)
-        if self._settings_position:
-            lat, lon, station = self._settings_position
+
+        lat, lon = get_gps_position(cfg)
+        if lat is not None and lon is not None:
             doa.latitude = lat
             doa.longitude = lon
-            if not doa.station:
+            return
+
+        if feed_url not in self._settings_cache:
+            self._settings_cache[feed_url] = await self._fetch_settings_position(
+                feed_url
+            )
+        cached = self._settings_cache.get(feed_url)
+        if cached:
+            doa.latitude, doa.longitude, station = cached
+            if not doa.station and station:
                 doa.station = station
 
-    async def handle_data(self, data: str, feed_url: str = "") -> None:
-        """Parse the (possibly multi-VFO) DOA payload and enqueue CoT."""
+    async def handle_data(
+        self,
+        data: str,
+        feed_url: str,
+        server: KrakenServerConfig,
+        cfg: dict,
+    ) -> int:
+        """Parse DOA payload and enqueue CoT. Returns number of events sent."""
         if not data or not data.strip():
-            self._logger.debug("Empty DOA feed (no active signal).")
-            return
+            self._logger.debug("Empty DOA feed from %s", feed_url)
+            return 0
 
-        builders = kraktak.functions.selected_builders(self.config)
+        builders = kraktak.functions.selected_builders(cfg)
         if not builders:
-            self._logger.warning("No valid COT_TYPES configured; nothing to emit.")
-            return
+            return 0
 
+        sent = 0
+        first_doa = None
         for line in data.splitlines():
             doa = parse_doa_csv(line)
             if doa is None:
                 continue
+            if server.station:
+                doa.station = str(server.station)
+            if first_doa is None:
+                first_doa = doa
 
-            await self._apply_position_fallback(doa, feed_url)
+            await self._apply_position_fallback(doa, feed_url, cfg)
             if doa.latitude is None or doa.longitude is None:
                 self._logger.warning(
-                    "No position available for station %s", doa.station
+                    "No position for station %s (%s)", doa.station, feed_url
                 )
                 continue
 
-            if not kraktak.functions.passes_filters(doa, self.config):
+            if not kraktak.functions.passes_filters(doa, cfg):
                 continue
 
             for builder in builders:
-                event = kraktak.cot_to_xml(doa, self.config, builder)
+                event = kraktak.cot_to_xml(doa, cfg, builder)
                 if event:
                     await self.put_queue(event)
+                    sent += 1
 
-    async def get_feed(self, url: str) -> None:
-        """Poll the DOA feed once and hand the payload to the data handler."""
+        if first_doa is not None:
+            STORE.record_poll(
+                feed_url,
+                first_doa.station,
+                reachable=True,
+                latitude=first_doa.latitude,
+                longitude=first_doa.longitude,
+                doa_angle=first_doa.max_doa_angle,
+                confidence=first_doa.confidence,
+                rssi=first_doa.rssi,
+            )
+        if sent:
+            STORE.record_packets(sent)
+        return sent
+
+    async def poll_server(self, server: KrakenServerConfig) -> None:
+        """Poll one KrakenSDR feed."""
         if self.session is None or self.session.closed:
-            self._logger.error("Session is closed, cannot poll.")
             return
 
+        feed_url = server.feed_url
+        cfg = merge_server_config(self.config, server)
+        if self._runtime_overlay.get("doa_ignore_start") not in (None, ""):
+            cfg["DOA_IGNORE_START"] = self._runtime_overlay["doa_ignore_start"]
+        if self._runtime_overlay.get("doa_ignore_end") not in (None, ""):
+            cfg["DOA_IGNORE_END"] = self._runtime_overlay["doa_ignore_end"]
         headers = {"User-Agent": "KrakTAK", "Accept": "text/html"}
-        self._logger.debug("Fetching DOA from %s", url)
         timeout = aiohttp.ClientTimeout(total=10)
         try:
-            async with self.session.get(url, headers=headers, timeout=timeout) as resp:
+            async with self.session.get(
+                feed_url, headers=headers, timeout=timeout
+            ) as resp:
                 if resp.status != 200:
-                    self._logger.error("HTTP %s for %s", resp.status, url)
+                    self._logger.error("HTTP %s for %s", resp.status, feed_url)
+                    STORE.record_poll(
+                        feed_url,
+                        server.station or "",
+                        reachable=False,
+                        error=f"HTTP {resp.status}",
+                    )
                     return
                 data = await resp.text()
         except Exception as exc:  # noqa: BLE001
-            self._logger.error("Error polling %s: %s", url, exc)
+            self._logger.error("Error polling %s: %s", feed_url, exc)
+            STORE.record_poll(
+                feed_url,
+                server.station or "",
+                reachable=False,
+                error=str(exc),
+            )
             return
 
-        await self.handle_data(data, feed_url=url)
+        await self.handle_data(data, feed_url, server, cfg)
 
     async def run(self, _=-1) -> None:
-        """Main loop: poll the DOA feed on an interval."""
-        url: Optional[str] = self.config.get("FEED_URL") or kraktak.DEFAULT_FEED_URL
-        if not url:
-            raise ValueError("Please specify a FEED_URL.")
-
+        """Poll all configured Kraken servers on an interval."""
         poll_interval: Union[int, str, None] = self.config.get("POLL_INTERVAL")
         if poll_interval in ("", None):
             poll_interval = kraktak.DEFAULT_POLL_INTERVAL
 
-        self._logger.info("%s polling every %ss: %s", self.__class__.__name__,
-                          poll_interval, url)
+        runtime_path = runtime_path_from_config(self.config)
+        self._logger.info(
+            "%s polling every %ss (runtime=%s)",
+            self.__class__.__name__,
+            poll_interval,
+            runtime_path or "none",
+        )
 
         async with aiohttp.ClientSession() as self.session:
             while True:
-                await self.get_feed(url)
-                await asyncio.sleep(int(poll_interval))
+                self._runtime_overlay = load_runtime_document(runtime_path)
+                self._mirror = get_mirror(self.config, self._runtime_overlay)
+
+                servers = load_kraken_servers(self.config, runtime_path)
+                if not servers:
+                    raise ValueError("No Kraken servers configured.")
+
+                interval = self._runtime_overlay.get("poll_interval", poll_interval)
+                for server in servers:
+                    await self.poll_server(server)
+
+                await asyncio.sleep(int(interval))

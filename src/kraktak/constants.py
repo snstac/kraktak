@@ -42,6 +42,13 @@ DEFAULT_COT_TYPES: str = "lob,bearing_line"
 DEFAULT_MIN_CONFIDENCE: str = ""
 DEFAULT_MIN_RSSI: str = ""
 
+# ATAK mesh multicast (duplicate every CoT when ENABLE_MULTICAST_MIRROR=true).
+DEFAULT_COT_MULTICAST_URL: str = "udp://239.2.3.1:6969"
+DEFAULT_ENABLE_MULTICAST: str = "false"
+
+# Dashboard-written JSON overrides (reloaded each poll).
+DEFAULT_RUNTIME_CONFIG: str = "kraktak-runtime.json"
+
 # --- Control plane (TAK -> KrakenSDR) ---------------------------------------
 
 # Whether to enable inbound control (retune, gain, coordinates) from TAK.

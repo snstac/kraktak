@@ -1,3 +1,12 @@
+## KrakTAK 10.1.0
+
+- Multi-Kraken support: `KRAKEN_SERVERS` JSON, runtime reload via
+  `RUNTIME_CONFIG`, and Canary-style `ip` / `line_distance` fields.
+- ATAK multicast mirror (`ENABLE_MULTICAST_MIRROR`, `COT_MULTICAST_URL`).
+- Operational telemetry (`packets_sent`, `last_packet_ago`, per-server status).
+- Dashboard v2: multi-server table, runtime config save, TAK readout, wedge filter.
+- Optional gpsd position fallback (`kraktak[gpsd]` extra).
+
 ## KrakTAK 10.0.0
 
 - Modernized onto PyTAK 7.3.x (was 5.4.x).

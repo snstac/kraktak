@@ -22,7 +22,10 @@ from .constants import (  # NOQA
     DEFAULT_API_AGENT_PORT,
     DEFAULT_CONTROL_BACKEND,
     DEFAULT_COT_FAMILY,
+    DEFAULT_COT_MULTICAST_URL,
     DEFAULT_COT_TYPES,
+    DEFAULT_ENABLE_MULTICAST,
+    DEFAULT_RUNTIME_CONFIG,
     DEFAULT_DEVICE_TYPE,
     DEFAULT_DSP_PORT,
     DEFAULT_ENABLE_CONTROL,
@@ -64,4 +67,4 @@ from .functions import (  # NOQA
 
 from .classes import DOAValues, KrakTAKWorker, parse_doa_csv  # NOQA
 
-__version__ = "10.0.0"
+__version__ = "10.1.0"

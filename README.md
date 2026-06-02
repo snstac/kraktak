@@ -66,8 +66,12 @@ the same name (handy for Docker/systemd). Key settings:
 | Setting | Description | Default |
 | --- | --- | --- |
 | `COT_URL` | TAK destination (`tcp://`, `tls://`, `udp://`) | - |
-| `FEED_URL` | KrakenSDR DOA CSV export | `http://krakensdr:8081/DOA_value.html` |
+| `FEED_URL` | Single KrakenSDR DOA CSV export | `http://krakensdr:8081/DOA_value.html` |
+| `KRAKEN_SERVERS` | JSON array of feeds (multi-Kraken) | - |
+| `RUNTIME_CONFIG` | Dashboard-saved JSON (hot reload) | `kraktak-runtime.json` |
 | `POLL_INTERVAL` | DOA poll interval (s) | `3` |
+| `ENABLE_MULTICAST_MIRROR` | Also send CoT to ATAK multicast | `false` |
+| `ENABLE_GPSD` | Use gpsd when DOA has no position | `false` |
 | `COT_TYPES` | Renderings: `sensor,bearing_line,range_bearing,lob,cep` | `bearing_line,lob` |
 | `LOB_LENGTH_M` | Bearing-line length (m) | `10000` |
 | `MIN_CONFIDENCE` / `MIN_RSSI` | Drop weak detections | unset |
@@ -109,8 +113,9 @@ Otherwise KrakTAK falls back to uploading `settings.json` (it sets
 kraktak-dashboard -c kraktak.conf   # serves on :8000 by default
 ```
 
-Shows live KrakenSDR settings and the latest DOA, with buttons to tune, set
-gain, and set coordinates through the same control backends.
+Shows per-server status and telemetry, edits multi-Kraken runtime config
+(poll interval, wedge filter, multicast mirror), and exposes tune/gain/coord
+controls through the same backends as the TAK control plane.
 
 ## Development
 
