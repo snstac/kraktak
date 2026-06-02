@@ -267,6 +267,15 @@ class KrakTAKWorker(pytak.QueueWorker):
             )
             return
 
+        if not (data or "").strip():
+            STORE.record_poll(
+                feed_url,
+                server.station or "",
+                reachable=True,
+                error="empty DOA feed (no squelch?)",
+            )
+            return
+
         await self.handle_data(data, feed_url, server, cfg)
 
     async def run(self, _=-1) -> None:

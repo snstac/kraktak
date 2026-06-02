@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import configparser
 import os
 from typing import Any, Dict, List
@@ -258,12 +259,25 @@ async def handle_status(request):
         "runtime_path": _runtime_path(config),
     }
 
-    ctrl = await _controller(app)
-    if ctrl is not None:
+    backend = (
+        config.get("CONTROL_BACKEND") or kraktak.DEFAULT_CONTROL_BACKEND
+    ).lower()
+    if backend == "settings_json" or backend != "auto":
+        ctrl = await _controller(app)
+        if ctrl is not None:
+            try:
+                out["settings"] = await ctrl.get_config()
+            except Exception as exc:  # noqa: BLE001
+                out["settings_error"] = str(exc)
+    else:
         try:
-            out["settings"] = await ctrl.get_config()
-        except Exception as exc:  # noqa: BLE001
-            out["settings_error"] = str(exc)
+            ctrl = await asyncio.wait_for(_controller(app), timeout=8.0)
+            if ctrl is not None:
+                out["settings"] = await asyncio.wait_for(
+                    ctrl.get_config(), timeout=8.0
+                )
+        except asyncio.TimeoutError:
+            out["settings_error"] = "control backend probe timed out"
 
     return web.json_response(out)
 
@@ -370,7 +384,8 @@ def _load_config(path):
         cp = configparser.ConfigParser()
         cp.read(path)
         if cp.has_section("kraktak"):
-            section = dict(cp["kraktak"])
+            # ConfigParser lowercases option names; KrakTAK uses uppercase keys.
+            section = {k.upper(): v for k, v in cp["kraktak"].items()}
     for key in (
         "FEED_URL",
         "KRAKEN_HOST",
