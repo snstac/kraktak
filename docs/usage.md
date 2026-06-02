@@ -1,48 +1,70 @@
-## Command-line
+# Usage
 
-Command-line usage is available by running ``kraktak -h``.
+## Running the bridge
 
-```
-usage: kraktak [-h] [-c CONFIG_FILE] [-p PREF_PACKAGE]
-
-options:
-  -h, --help            show this help message and exit
-  -c CONFIG_FILE, --CONFIG_FILE CONFIG_FILE
-                        Optional configuration file. Default: config.ini
-  -p PREF_PACKAGE, --PREF_PACKAGE PREF_PACKAGE
-                        Optional connection preferences package zip file (aka data package).
+```bash
+kraktak -c kraktak.conf
 ```
 
-## Run as a service / Run forever
+Or via environment variables only:
 
-1. Add the text contents below a file named `/etc/systemd/system/kraktak.service`  
-  You can use `nano` or `vi` editors: `sudo nano /etc/systemd/system/kraktak.service`
-2. Reload systemctl: `sudo systemctl daemon-reload`
-3. Enable KrakTAK: `sudo systemctl enable kraktak`
-4. Start KrakTAK: `sudo systemctl start kraktak`
-
-### `kraktak.service` Content
-```ini
-[Unit]
-Description=KrakTAK - Display Aircraft in TAK
-Documentation=https://kraktak.rtfd.io
-Wants=network.target
-After=network.target
-# Uncomment this line if you're running dump1090 & kraktak on the same computer:
-# After=dump1090-fa.service
-
-[Service]
-RuntimeDirectoryMode=0755
-ExecStart=/usr/local/bin/kraktak -c /etc/kraktak.ini
-SyslogIdentifier=kraktak
-Type=simple
-Restart=always
-RestartSec=30
-RestartPreventExitStatus=64
-Nice=-5
-
-[Install]
-WantedBy=default.target
+```bash
+COT_URL=udp://239.2.3.1:6969 \
+FEED_URL=http://192.168.50.5:8081/DOA_value.html \
+COT_TYPES=bearing_line,lob,sensor \
+kraktak
 ```
 
-> Pay special attention to the `ExecStart` line above. You'll need to provide the full local filesystem path to both your kraktak executable & kraktak configuration files.
+As a service (Debian package installs this for you):
+
+```bash
+sudoedit /etc/default/kraktak
+sudo systemctl enable --now kraktak
+sudo journalctl -u kraktak -f
+```
+
+## Controlling the KrakenSDR from TAK
+
+Set `ENABLE_CONTROL = true` and connect `COT_URL` to a TAK Server over
+`tcp://`/`tls://` (multicast is transmit-only). Then send a GeoChat message:
+
+```
+kraken freq 462.5625      # tune center frequency (MHz)
+kraken gain 16.6          # uniform gain (dB)
+kraken vfo 0 467000000    # VFO-0 frequency (Hz)
+kraken bw 0 12500         # VFO-0 bandwidth (Hz)
+kraken coord 34.70 -86.65 # station coordinates
+kraken status             # report current state
+```
+
+You can also send a CoT event carrying a control detail:
+
+```xml
+<detail>
+  <__krakencmd action="set_frequency" freq="146.52"/>
+</detail>
+```
+
+KrakTAK replies with a GeoChat acknowledgement and validates frequency/gain
+against the KrakenSDR's accepted ranges before applying.
+
+### Control backends
+
+KrakTAK auto-detects the best available path:
+
+1. `api_agent` - the [kraken_api_agent](https://github.com/ghostop14/kraken_api_agent)
+   REST API on `:8181` (install with `extras/install_kraken_api_agent.sh`).
+2. `middleware` - the krakensdr_doa middleware on `:8042`.
+3. `settings_json` - portable `settings.json` upload on `:8081` (sets
+   `en_remote_control` on first push).
+
+Force a specific one with `CONTROL_BACKEND`.
+
+## Dashboard
+
+```bash
+kraktak-dashboard -c kraktak.conf
+```
+
+Open `http://<host>:8000/` for live KrakenSDR settings, the latest DOA, and
+manual tune/gain/coordinate controls.

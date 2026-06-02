@@ -1,59 +1,55 @@
-KrakTAK's configuration parameters can be set two ways:
+# Configuration
 
-1. In an INI-style configuration file. (ex. ``kraktak -c config.ini``)
-2. As environment variables. (ex. ``export DEBUG=1;kraktak``)
+KrakTAK reads settings from an INI config file (`-c kraktak.conf`, section
+`[kraktak]`) or from environment variables of the same name. Environment
+variables override the file, which is convenient for Docker and systemd.
 
-KrakTAK has the following built-in configuration parameters:
+See [`kraktak-example.conf`](https://github.com/snstac/kraktak/blob/main/kraktak-example.conf)
+for a complete, commented template.
 
-* **`FEED_URL`**:
-    * Default: ``file:///run/dump1090-fa/aircraft.json``
+## Core
 
-    ADS-B data source URL. Supported URL types:
+| Setting | Description | Default |
+| --- | --- | --- |
+| `COT_URL` | TAK destination: `tcp://host:8087`, `tls://host:8089`, or `udp://239.2.3.1:6969` | - |
+| `FEED_URL` | KrakenSDR DOA CSV export | `http://krakensdr:8081/DOA_value.html` |
+| `POLL_INTERVAL` | DOA poll interval, seconds | `3` |
+| `COT_STALE` | CoT stale time, seconds | `120` |
 
-    - ``file://`` The absolute local folder path to an ADS-B data file in JSON format.
-    - ``http://`` The local piaware web server aircraft data JSON URL. (ex. ``http://piaware.local:8080/data/aircraft.json``)
-    - ``tcp://`` A dump1090 BaseStation (SBS-1, "raw") host & port URL (ex. ``tcp://sensor.example.com:30003``).
-    - ``tcp+raw://`` A dump1090 BaseStation (SBS-1, "raw") host & port URL (ex. ``tcp+raw://sensor.example.com:30003``).
-    - ``tcp+beast://`` A dump1090 Beast binary mode host & port URL (ex. ``tcp+beast://sensor.example.com:30005``).
+`COT_URL` also honors the standard PyTAK TLS variables (`PYTAK_TLS_CLIENT_CERT`,
+etc.) for connecting to a TAK Server.
 
-* **`POLL_INTERVAL`**:
-    * Default: ``3`` seconds
+## CoT rendering
 
-    If the `FEED_URL` is of type HTTP, the period, in seconds, to poll this URL.
-    
-* **`ALT_UPPER`**:
-    * Default: unset
+| Setting | Description | Default |
+| --- | --- | --- |
+| `COT_TYPES` | Comma list of `sensor`, `bearing_line`, `range_bearing`, `lob`, `cep` | `bearing_line,lob` |
+| `LOB_LENGTH_M` | Bearing-line length, meters (`LOB_LENGTH_KM` also accepted) | `10000` |
+| `PERSIST_LOB` | Randomize LOB UID so bearings leave a trail | `false` |
+| `CEP_MIN_RADIUS_M` / `CEP_MAX_RADIUS_M` | `cep` ellipse size bounds | `100` / `2000` |
 
-    Upper Altitude Limit, geometric (GNSS / INS) altitude in feet referenced to the WGS84 ellipsoid.
+## Filtering
 
-* **`ALT_LOWER`**:
-    * Default: unset
-    
-    Lower Altitude Limit, geometric (GNSS / INS) altitude in feet referenced to the WGS84 ellipsoid.
+| Setting | Description |
+| --- | --- |
+| `MIN_CONFIDENCE` | Drop detections below this confidence (0-99) |
+| `MIN_RSSI` | Drop detections below this RSSI (dB) |
+| `DOA_IGNORE_START` / `DOA_IGNORE_END` | Drop bearings inside this compass wedge |
 
-* **`KNOWN_CRAFT`**:
-    * Default: unset
+## Control plane (TAK -> KrakenSDR)
 
-    CSV-style aircraft hints file for overriding callsign, icon, COT Type, etc.
+| Setting | Description | Default |
+| --- | --- | --- |
+| `ENABLE_CONTROL` | Accept control commands from TAK | `false` |
+| `CONTROL_BACKEND` | `auto`, `api_agent`, `middleware`, or `settings_json` | `auto` |
+| `KRAKEN_HOST` | Control host (defaults to the `FEED_URL` host) | - |
+| `API_AGENT_PORT` | kraken_api_agent port | `8181` |
+| `MIDDLEWARE_PORT` | krakensdr_doa middleware port | `8042` |
+| `DSP_PORT` | settings.json / upload port | `8081` |
 
-* **`INCLUDE_ALL_CRAFT`**:
-    * Default: ``False``
+## Dashboard
 
-    If ``True`` and ``KNOWN_CRAFT`` is set, will forward all aircraft, including those transformed by the ``KNOWN_CRAFT`` database.
-
-* **`INCLUDE_TISB`**:
-    * Default: ``False``
-
-    If ``True``, includes TIS-B tracks.
-
-* **`TISB_ONLY`**:
-    * Default: ``False``
-
-    If `True`, only passes TIS-B tracks (`INCLUDE_TISB` must also be `True`).
-
-Additional configuration parameters, including TAK Server configuration, are included in the [PyTAK Configuration](https://pytak.readthedocs.io/en/latest/configuration/) documentation.
-
-
-
-
-
+| Setting | Description | Default |
+| --- | --- | --- |
+| `DASHBOARD_HOST` | Bind address for `kraktak-dashboard` | `0.0.0.0` |
+| `DASHBOARD_PORT` | Bind port for `kraktak-dashboard` | `8000` |

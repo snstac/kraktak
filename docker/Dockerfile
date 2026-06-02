@@ -1,36 +1,24 @@
-# Download base image ubuntu 22.04
-FROM ubuntu:22.04
+# KrakTAK runtime image.
+#
+# Build from the repo root:
+#   docker build -f docker/Dockerfile -t kraktak:local .
+FROM python:3.12-slim
 
-# LABEL about the custom image
-LABEL description="ADS-B to TAK Gateway."
+LABEL org.opencontainers.image.title="KrakTAK" \
+      org.opencontainers.image.description="KrakenSDR to TAK Bridge" \
+      org.opencontainers.image.source="https://github.com/snstac/kraktak"
 
-# Disable Prompt During Packages Installation
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Update Ubuntu Software repository
-RUN apt update
-RUN apt upgrade -y
-RUN apt install -y python3
-RUN apt install -y python3-pip
-RUN apt install -y python3-numpy
-RUN apt install -y python3-zmq
-RUN apt install -y python3-cryptography
-RUN apt install -y rtl-sdr
+WORKDIR /app
+COPY . /app
 
-# Install Python modules
-RUN python3 -m pip install asyncinotify
-RUN python3 -m pip install pymodes
-RUN python3 -m pip install pyrtlsdr
+RUN pip install --no-cache-dir . \
+    && python3 -m kraktak --version > /dev/null
 
-# Build kraktak
-COPY . /kraktak/
-RUN cd /kraktak/ && python3 setup.py install easy_install 'kraktak[with_pymodes]'
-RUN rm -R /kraktak/
+RUN useradd --create-home --home-dir /home/kraktak --shell /bin/bash kraktak
+USER kraktak
 
-# Copy kraktak configuration
-RUN mkdir /etc/kraktak/
-COPY kraktak-docker-example.conf /etc/kraktak/kraktak.conf
-
-# Copy start.sh script and define default command for the container
-COPY start.sh /start.sh
-CMD ["./start.sh"]
+# Configure via environment variables (see kraktak-example.conf) or mount a
+# config at /etc/kraktak/kraktak.conf and override the command.
+ENTRYPOINT ["kraktak"]

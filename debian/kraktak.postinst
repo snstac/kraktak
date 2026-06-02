@@ -1,0 +1,35 @@
+#!/bin/sh
+# postinst script for kraktak
+set -e
+
+KRAKTAK_USER="kraktak"
+
+case "$1" in
+    configure)
+        # Create a dedicated system user for the service.
+        if ! getent passwd "$KRAKTAK_USER" >/dev/null; then
+            adduser --system --no-create-home --group "$KRAKTAK_USER" || true
+        fi
+
+        # Ensure the PyTAK runtime dependency is present (not packaged in apt).
+        if command -v pip3 >/dev/null 2>&1; then
+            pip3 install --upgrade "pytak>=7.3.10" || \
+                pip3 install --break-system-packages --upgrade "pytak>=7.3.10" || true
+        fi
+
+        # Reload + enable the service if systemd is available.
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+            systemctl enable kraktak.service || true
+            echo ""
+            echo "KrakTAK installed. Edit /etc/default/kraktak then run:"
+            echo "  sudo systemctl start kraktak"
+            echo "  sudo journalctl -u kraktak -f"
+            echo ""
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

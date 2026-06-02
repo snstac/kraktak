@@ -34,3 +34,7 @@ redis-server/
 __pycache__
 known_craft.csv
 env
+
+# Local reference trees (not part of KrakTAK releases)
+takline/
+takcot-master/

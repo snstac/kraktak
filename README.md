@@ -1,48 +1,129 @@
-KrakenSDR Raspberry Pi 4 image quickstart (this image requires a couple commands to set the environment up)
-https://www.youtube.com/watch?v=3kVVMPc3WTc
+# KrakTAK: KrakenSDR to TAK
 
-Example
-https://www.youtube.com/watch?v=AjJOk-vhxMA
+KrakTAK bridges a [KrakenSDR](https://www.krakenrf.com/) direction-finding
+receiver to [TAK](https://tak.gov/) (ATAK / WinTAK / iTAK / TAK Server). It
+polls the KrakenSDR DOA feed, renders each bearing as Cursor-on-Target (CoT),
+and can be driven *back* from TAK to retune and reconfigure the radio.
 
-A Python application with html dashboard designed to help use your KrakenSDR with TAK products.
-For use in a non-production environment.
-Defaults are set to be run on the same server as your KrakenSDR server, however other network configurations should work.
+Built on [PyTAK](https://github.com/snstac/pytak). CoT detail elements
+(`__lob`, `__cep`, `signalInfo`) are validated against the MITRE/TAK CoT XSD
+reference set.
 
-Tested using Python and Python 3 with a Chrome browser.
-# Quick Start
-Step 1:
-Clone or download Kraken-to-TAK-Python to your computer
+## Features
 
-Step 2:
-Initialize or start your KrakenSDR software (this can be done after starting Kraken to TAK also)
+- **DOA -> CoT** from the KrakenSDR "Kraken App" CSV export (`DOA_value.html`),
+  including multi-VFO records.
+- **Multiple renderings**, selectable via `COT_TYPES`:
+  - `bearing_line` - a line of bearing (`u-d-f`) colored by azimuth
+  - `lob` - a native TAK `__lob` detection (schema-valid `signalInfo` + `__startLocation`)
+  - `range_bearing` - a TAK Range & Bearing line (`u-rb-a`)
+  - `sensor` - the KrakenSDR station marker (`a-f-G-U-C`)
+  - `cep` - a `__cep` error ellipse sized from detection confidence
+- **Bi-directional control**: send commands from TAK (GeoChat or a
+  `<__krakencmd>` detail) to retune frequency, set gain/VFO, or update station
+  coordinates. Pluggable backends auto-detect the best available control path:
+  - `api_agent` - [kraken_api_agent](https://github.com/ghostop14/kraken_api_agent) REST API (`:8181`)
+  - `middleware` - krakensdr_doa middleware (`:8042`)
+  - `settings_json` - portable `settings.json` upload (`:8081`)
+- **Filtering**: confidence/RSSI thresholds and a DOA exclusion wedge.
+- **Turn-key**: Debian/RPM packages, Docker image + Compose, and a systemd
+  service.
+- **Optional dashboard**: a lightweight status + manual-control web page.
 
-Step 3:
-Navigate to the directory and start
+## Install
+
+### pip
+
+```bash
+pip install kraktak           # from PyPI
+pip install -e .              # from a checkout
 ```
-$ cd Kraken-to-TAK-Python
-$ python KrakenToTAK.py
+
+### Debian / Docker
+
+```bash
+# Debian package (built by CI / make package)
+sudo apt install ./kraktak_*.deb
+
+# Docker
+docker build -f docker/Dockerfile -t kraktak:local .
+docker compose -f docker/docker-compose.yml up --build
 ```
 
-Step 4:
-Open a browser and navigate to http://<YOUR_IP:8000
+## Quick start
 
-# Instructions
-Kraken Server
-	-Kraken Server IP should be the IPv4 of the computer that your KrakenSDR software is running on. The Kraken Station ID is for situations with multiple KrakenSDR radios.
+1. Copy `kraktak-example.conf` and edit `COT_URL` (your TAK destination) and
+   `FEED_URL` (your KrakenSDR).
+2. Run it:
 
- <img width="333" alt="Screenshot 2024-02-15 at 8 59 32 PM" src="https://github.com/canaryradio/Kraken-to-TAK-Python/assets/127666889/1e5baa8e-ec39-444d-aaa5-5aae9b0979f2">
+```bash
+kraktak -c kraktak.conf
+```
 
-TAK Server
-	-TAK Server IP should be the IPv4 of your TAK Server. TAK Server Port should be the port you assigned for the Kraken input. TAK Multicast will enable and disable sending Kraken packets to the multicast default for TAK clients
+Configuration may be supplied via the config file or environment variables of
+the same name (handy for Docker/systemd). Key settings:
 
-<img width="328" alt="Screenshot 2024-02-11 at 5 09 54 PM" src="https://github.com/canaryradio/Kraken-to-TAK-Python/assets/127666889/36be1a29-7fe7-4d11-b306-81c6f7ee7b9b">
+| Setting | Description | Default |
+| --- | --- | --- |
+| `COT_URL` | TAK destination (`tcp://`, `tls://`, `udp://`) | - |
+| `FEED_URL` | KrakenSDR DOA CSV export | `http://krakensdr:8081/DOA_value.html` |
+| `POLL_INTERVAL` | DOA poll interval (s) | `3` |
+| `COT_TYPES` | Renderings: `sensor,bearing_line,range_bearing,lob,cep` | `bearing_line,lob` |
+| `LOB_LENGTH_M` | Bearing-line length (m) | `10000` |
+| `MIN_CONFIDENCE` / `MIN_RSSI` | Drop weak detections | unset |
+| `DOA_IGNORE_START` / `DOA_IGNORE_END` | Exclusion wedge (deg) | unset |
+| `ENABLE_CONTROL` | Accept control commands from TAK | `false` |
+| `CONTROL_BACKEND` | `auto` / `api_agent` / `middleware` / `settings_json` | `auto` |
 
-Bearing Filter
-	-DOA Ignore/Exclusion Range is the option to not build a packet for bearings that are coming from the specified direction. The reset button will remove the filter.
+> Note: the bridge only transmits over `udp://` multicast. To receive control
+> commands from TAK you must connect to a TAK Server over `tcp://`/`tls://`.
 
-<img width="332" alt="Screenshot 2024-02-11 at 5 10 51 PM" src="https://github.com/canaryradio/Kraken-to-TAK-Python/assets/127666889/69abba4a-aaa0-4972-963e-5204c208bc8c">
+## Controlling the KrakenSDR from TAK
 
-New line with new UID
-	-Persist DOA Line will randomize the UID of the Line XML payload which will create a new line for each DOA bearing instead of overwriting the same line.
+Enable `ENABLE_CONTROL = true` and send a GeoChat message (or a CoT carrying a
+`<__krakencmd>` detail). The grammar:
 
-<img width="330" alt="Screenshot 2024-02-11 at 5 11 29 PM" src="https://github.com/canaryradio/Kraken-to-TAK-Python/assets/127666889/1a7231f5-586b-49fe-89b5-749bdfb1fd35">
+```
+kraken freq 462.5625      # tune center frequency (MHz)
+kraken gain 16.6          # set uniform gain (dB)
+kraken vfo 0 467000000    # set VFO-0 frequency (Hz)
+kraken bw 0 12500         # set VFO-0 bandwidth (Hz)
+kraken coord 34.70 -86.65 # set station coordinates
+kraken status             # report current frequency/gain/station
+```
+
+KrakTAK replies with a GeoChat acknowledgement. For the most robust control,
+install the API agent on the KrakenSDR:
+
+```bash
+# run ON the KrakenSDR device
+bash extras/install_kraken_api_agent.sh
+```
+
+Otherwise KrakTAK falls back to uploading `settings.json` (it sets
+`en_remote_control` on first push).
+
+## Dashboard (optional)
+
+```bash
+kraktak-dashboard -c kraktak.conf   # serves on :8000 by default
+```
+
+Shows live KrakenSDR settings and the latest DOA, with buttons to tune, set
+gain, and set coordinates through the same control backends.
+
+## Development
+
+```bash
+make editable                 # pip install -e .
+make install_test_requirements
+make test                     # pytest (incl. XSD validation of __lob/__cep)
+make lint flake8              # static checks
+make package                  # build a Debian .deb
+make rpm                      # build an RPM
+```
+
+## License & Copyright
+
+Copyright Sensors & Signals LLC <https://www.snstac.com>. Licensed under the
+Apache License, Version 2.0.

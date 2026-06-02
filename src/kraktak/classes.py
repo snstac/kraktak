@@ -20,177 +20,199 @@
 
 import asyncio
 
-from typing import Optional, Union
+from dataclasses import dataclass, field
+from typing import List, Optional, Union
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
-# import gps.aiogps
 
 import pytak
+
 import kraktak
-from dataclasses import dataclass
 
 
 @dataclass
 class DOAValues:
-    """Data class for Kraken DOA values."""
+    """A single KrakenSDR DOA record (one VFO channel)."""
+
     timestamp: int
-    max_doa_angle: int
-    confidence: int
-    rssi: int
+    max_doa_angle: float
+    confidence: float
+    rssi: float
     frequency: int
     antenna: str
     latency: float
     station: str
-    latitude: float
-    longitude: float
-    gps_heading: int
-    compass_heading: int
-    sensor: str
-    values: list
-    second_point: Optional[tuple] = None
-    uplink_rssi: Optional[int] = 0
-    downlink_rssi: Optional[int] = 0
-    tag: Optional[str] = ""
-    error_radius: Optional[float] = 0.0
-    comments: Optional[str] = ""
+    latitude: Optional[float]
+    longitude: Optional[float]
+    gps_heading: Optional[float] = None
+    compass_heading: Optional[float] = None
+    sensor: str = ""
+    values: List[float] = field(default_factory=list)
+    center_lat: Optional[float] = None
+    center_lon: Optional[float] = None
+
+
+def parse_doa_csv(line: str) -> Optional[DOAValues]:
+    """Parse one CSV line of the KrakenSDR "Kraken App" DOA export.
+
+    Returns ``None`` if the line is empty or malformed.
+    """
+    line = (line or "").strip()
+    if not line or "," not in line:
+        return None
+
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < kraktak.DOA_MIN_FIELDS:
+        return None
+
+    def _f(idx: int, default=None):
+        try:
+            return float(parts[idx])
+        except (ValueError, IndexError):
+            return default
+
+    lat = _f(kraktak.DOA_IDX_LATITUDE)
+    lon = _f(kraktak.DOA_IDX_LONGITUDE)
+    values = []
+    for raw in parts[kraktak.DOA_IDX_POWER_START:]:
+        try:
+            values.append(float(raw))
+        except ValueError:
+            continue
+
+    return DOAValues(
+        timestamp=int(_f(kraktak.DOA_IDX_EPOCH_MS, 0) or 0),
+        max_doa_angle=_f(kraktak.DOA_IDX_MAX_ANGLE, 0.0),
+        confidence=_f(kraktak.DOA_IDX_CONFIDENCE, 0.0),
+        rssi=_f(kraktak.DOA_IDX_RSSI, 0.0),
+        frequency=int(_f(kraktak.DOA_IDX_FREQUENCY_HZ, 0) or 0),
+        antenna=parts[kraktak.DOA_IDX_ARRANGEMENT],
+        latency=_f(kraktak.DOA_IDX_LATENCY_MS, 0.0),
+        station=parts[kraktak.DOA_IDX_STATION_ID],
+        latitude=lat,
+        longitude=lon,
+        gps_heading=_f(kraktak.DOA_IDX_GPS_HEADING),
+        compass_heading=_f(kraktak.DOA_IDX_COMPASS_HEADING),
+        sensor=parts[kraktak.DOA_IDX_HEADING_SENSOR],
+        values=values,
+    )
+
+
+def settings_url_from_feed(feed_url: str) -> str:
+    """Derive the ``settings.json`` URL from a DOA feed URL (same host:port)."""
+    parts = urlsplit(feed_url)
+    return urlunsplit((parts.scheme, parts.netloc, "/settings.json", "", ""))
 
 
 class KrakTAKWorker(pytak.QueueWorker):
-    """Process Kraken DOA values, convert to CoT, and enqueue for transmission."""
+    """Poll the KrakenSDR DOA feed, convert to CoT, and enqueue for transmission."""
 
     def __init__(self, queue, config) -> None:
-        """Initialize this class."""
         super().__init__(queue, config)
         self.session: Optional[aiohttp.ClientSession] = None
-        self.position = None
+        self._settings_position = None  # cached (lat, lon, station) fallback
 
-    async def handle_data(self, data: Union[list, dict]) -> None:
-        """Handle Data: Render to CoT, put on TX queue."""
-        if not data:
-            self._logger.warning("Empty data ")
-            return
-
-        # If the response is a comma-separated string, split it
-        kraken_data = data.strip()
-        if not ',' in kraken_data:
-            self._logger.warning("Data is not in expected format: %s", kraken_data)
-            return
-    
-        data_parts = kraken_data.split(",")
-        if len(data_parts) < 10:
-            self._logger.warning("Data does not contain enough parts: %s", kraken_data)
-            return
-
-        values = [float(v.strip()) for v in data_parts[17:]]
-
-        # Create a DOAValues instance
-        doa_values = DOAValues(
-            timestamp=int(data_parts[0]),
-            max_doa_angle=int(float(data_parts[1])),
-            confidence=int(float(data_parts[2])),
-            rssi=int(float(data_parts[3])),
-            frequency=int(data_parts[4]),
-            antenna=data_parts[5].strip(),
-            latency=float(data_parts[6]),
-            station=data_parts[7].strip(),
-            latitude=float(data_parts[8]),
-            longitude=float(data_parts[9]),
-            gps_heading=int(data_parts[10]),
-            compass_heading=int(data_parts[11]),
-            sensor=data_parts[12].strip(),
-            values=values
-        )
-
-        cot_funcs = ["doa_to_cot_line_xml", "doa_to_cot_sensor_xml", "doa_to_cot_lob_xml"]
-        # cot_funcs = ["doa_to_cot_lob_xml"]
-        for cotf in cot_funcs:
-            event = kraktak.cot_to_xml(doa_values, self.config, cotf)
-            print(event)
-            await self.put_queue(event)
-
-    async def get_feed(self, url: bytes) -> None:
-        """Poll the feed and pass data to the data handler."""
+    async def _fetch_settings_position(self, feed_url: str):
+        """Fetch lat/lon/station from settings.json as a position fallback."""
         if self.session is None or self.session.closed:
-            self._logger.error("Session is closed, cannot proceed.")
+            return None
+        url = settings_url_from_feed(feed_url)
+        try:
+            async with self.session.get(
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+        except Exception as exc:  # noqa: BLE001
+            self._logger.debug("settings.json fetch failed: %s", exc)
+            return None
+        lat = data.get("latitude")
+        lon = data.get("longitude")
+        if lat is None or lon is None:
+            return None
+        return (float(lat), float(lon), str(data.get("station_id", "")))
+
+    async def _apply_position_fallback(self, doa: DOAValues, feed_url: str) -> None:
+        """Backfill missing/zero position from settings.json (cached)."""
+        if doa.latitude not in (None, 0.0) and doa.longitude not in (None, 0.0):
+            return
+        if self._settings_position is None:
+            self._settings_position = await self._fetch_settings_position(feed_url)
+        if self._settings_position:
+            lat, lon, station = self._settings_position
+            doa.latitude = lat
+            doa.longitude = lon
+            if not doa.station:
+                doa.station = station
+
+    async def handle_data(self, data: str, feed_url: str = "") -> None:
+        """Parse the (possibly multi-VFO) DOA payload and enqueue CoT."""
+        if not data or not data.strip():
+            self._logger.debug("Empty DOA feed (no active signal).")
             return
 
-        url_b = str(url)
-        headers = {
-            "User-Agent": "KrakTAK/1.0 (1)",
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate",
-            "Connection": "keep-alive",
-        }
+        builders = kraktak.functions.selected_builders(self.config)
+        if not builders:
+            self._logger.warning("No valid COT_TYPES configured; nothing to emit.")
+            return
 
-        self._logger.debug("Fetching data from %s", url)
-        async with self.session.get(url_b, headers=headers) as resp:
-            if resp.status != 200:
-                response_content = await resp.text()
-                self._logger.error("Received HTTP Status %s for %s", resp.status, url)
-                self._logger.error(response_content)
-                return
+        for line in data.splitlines():
+            doa = parse_doa_csv(line)
+            if doa is None:
+                continue
 
-            data = await resp.text()
-            if not data:
-                self._logger.debug("Empty response from %s", url)
-                return
+            await self._apply_position_fallback(doa, feed_url)
+            if doa.latitude is None or doa.longitude is None:
+                self._logger.warning(
+                    "No position available for station %s", doa.station
+                )
+                continue
 
-            self._logger.info(
-                "Retrieved %s records.", str(len(data) or "No")
-            )
-            await self.handle_data(data)
+            if not kraktak.functions.passes_filters(doa, self.config):
+                continue
 
-    # async def _start_gps_session(self) -> gps.aiogps.aiogps:
-    #     """Start a GPS session if configured."""
-    #     await asyncio.sleep(0)  # Yield control to the event loop
+            for builder in builders:
+                event = kraktak.cot_to_xml(doa, self.config, builder)
+                if event:
+                    await self.put_queue(event)
 
-    #     gps_config = self.config.get("GPS_CONFIG")
-    #     gps_config = {
-    #         "connection_args": {"host": "127.0.0.1", "port": 2947},
-    #         "connection_type": "tcp",
-    #         "connection_timeout": 5,
-    #         "reconnect": 0,  # do not try to reconnect, raise exceptions
-    #         "alive_opts": {
-    #             "rx_timeout": 5
-    #         }
+    async def get_feed(self, url: str) -> None:
+        """Poll the DOA feed once and hand the payload to the data handler."""
+        if self.session is None or self.session.closed:
+            self._logger.error("Session is closed, cannot poll.")
+            return
 
-    #     }
-        
-    #     if not gps_config:
-    #         self._logger.warning("No GPS configuration found, skipping GPS session.")
-    #         return None
+        headers = {"User-Agent": "KrakTAK", "Accept": "text/html"}
+        self._logger.debug("Fetching DOA from %s", url)
+        timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            async with self.session.get(url, headers=headers, timeout=timeout) as resp:
+                if resp.status != 200:
+                    self._logger.error("HTTP %s for %s", resp.status, url)
+                    return
+                data = await resp.text()
+        except Exception as exc:  # noqa: BLE001
+            self._logger.error("Error polling %s: %s", url, exc)
+            return
 
-    #     try:
-    #         self.gps_session = await gps.aiogps.start_gps_session(gps_config)
-    #         self._logger.info("GPS session started successfully.")
-    #     except Exception as e:
-    #         self._logger.error("Failed to start GPS session: %s", str(e))
-    #         return None
+        await self.handle_data(data, feed_url=url)
 
     async def run(self, _=-1) -> None:
-        """Run this Thread, Reads from Pollers."""
-
-        url: Optional[bytes] = self.config.get("FEED_URL")
-        if not url or url == "":
+        """Main loop: poll the DOA feed on an interval."""
+        url: Optional[str] = self.config.get("FEED_URL") or kraktak.DEFAULT_FEED_URL
+        if not url:
             raise ValueError("Please specify a FEED_URL.")
 
         poll_interval: Union[int, str, None] = self.config.get("POLL_INTERVAL")
-        if poll_interval == "" or poll_interval is None:
-            self._logger.info(
-                "POLL_INTERVAL not set, using default of %s seconds.",
-                kraktak.DEFAULT_POLL_INTERVAL,
-            )
+        if poll_interval in ("", None):
             poll_interval = kraktak.DEFAULT_POLL_INTERVAL
 
-        self._logger.info(
-            "Running %s at %ss for %s", self.__class__, poll_interval, url
-        )
+        self._logger.info("%s polling every %ss: %s", self.__class__.__name__,
+                          poll_interval, url)
 
         async with aiohttp.ClientSession() as self.session:
-            # async with self._start_gps_session() as self.gps_session:
             while True:
-                self._logger.info(
-                    "%s polling every %ss: %s", self.__class__, poll_interval, url
-                )
                 await self.get_feed(url)
                 await asyncio.sleep(int(poll_interval))

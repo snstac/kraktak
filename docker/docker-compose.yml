@@ -1,0 +1,27 @@
+# KrakTAK turn-key Docker Compose.
+#
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Edit the environment below (or point env_file at a copy of
+# kraktak-example.conf converted to KEY=VALUE pairs).
+
+services:
+  kraktak:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: kraktak:local
+    container_name: kraktak
+    restart: unless-stopped
+    # Host networking lets multicast (udp://239.2.3.1:6969) reach ATAK on the
+    # LAN. Drop it and publish ports if you only use a TAK Server over TCP/TLS.
+    network_mode: host
+    environment:
+      COT_URL: ${COT_URL:-udp://239.2.3.1:6969}
+      FEED_URL: ${FEED_URL:-http://192.168.50.5:8081/DOA_value.html}
+      POLL_INTERVAL: ${POLL_INTERVAL:-3}
+      COT_TYPES: ${COT_TYPES:-bearing_line,lob,sensor}
+      LOB_LENGTH_M: ${LOB_LENGTH_M:-10000}
+      COT_STALE: ${COT_STALE:-120}
+      ENABLE_CONTROL: ${ENABLE_CONTROL:-false}
+      CONTROL_BACKEND: ${CONTROL_BACKEND:-auto}

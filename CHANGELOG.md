@@ -1,3 +1,27 @@
+## KrakTAK 10.0.0
+
+- Modernized onto PyTAK 7.3.x (was 5.4.x).
+- Removed the ADS-B fork cruft: legacy `KrakenToTAK.py` Flask app, ADS-B Docker
+  image, `adsbcot` Debian files, and stale ADS-B tests.
+- Rewrote `functions.py`: removed duplicate definitions, dead `gpsd` code, and
+  magic numbers. Consolidated CoT builders: `sensor`, `bearing_line`,
+  `range_bearing`, `lob`, and a new `cep` error ellipse. Builders are selectable
+  via `COT_TYPES`.
+- Made `__lob`/`__cep`/`signalInfo` output schema-valid against the MITRE/TAK
+  CoT XSD reference set (`takcot-master/xsd`); added XSD validation tests.
+- Hardened DOA ingest: robust "Kraken App" CSV parsing, multi-VFO support,
+  graceful no-op on an empty feed, and a `settings.json` position fallback.
+- Added confidence/RSSI thresholds and a DOA exclusion wedge filter.
+- Added a bi-directional control plane (TAK -> KrakenSDR): a control worker that
+  consumes inbound CoT and applies commands via pluggable backends
+  (`api_agent`, `middleware`, `settings_json`) with auto-detection and request
+  timeouts. Commands via GeoChat or a `<__krakencmd>` detail; GeoChat acks.
+- Added an optional status + control dashboard (`kraktak-dashboard`).
+- Modernized packaging (`pyproject.toml`) and CI (single workflow: test matrix
+  3.9-3.13, sdist/wheel, Debian, RPM, GHCR Docker images, GitHub release).
+- Added a systemd service, Debian conffile/postinst, a runtime Docker image +
+  Compose, an example config, and a KrakenSDR-side `kraken_api_agent` installer.
+
 ## KrakTAK 9.0.0
 
 - Merged ADSBXCOT functionality into KrakTAK. 

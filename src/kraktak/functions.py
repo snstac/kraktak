@@ -16,676 +16,506 @@
 # limitations under the License.
 #
 
-"""kraktak Functions."""
+"""KrakTAK Functions: KrakenSDR DOA -> Cursor on Target.
 
+CoT detail elements (``__lob``, ``__cep``, ``signalInfo``) are built to validate
+against the MITRE/TAK CoT XSD reference set (see ``takcot-master/xsd``).
+"""
+
+import datetime
 import logging
 import math
 import os
-import warnings
-import xml.etree.ElementTree as ET
 import random
-
+import uuid
+import xml.etree.ElementTree as ET
 
 from configparser import SectionProxy
-from typing import Optional, Set, Union
+from typing import List, Optional, Tuple, Union
 
 import pytak
-import kraktak
 
+import kraktak
 
 APP_NAME = "kraktak"
 Logger = logging.getLogger(__name__)
-Debug = bool(os.getenv("DEBUG", False))
+Debug = bool(os.getenv("DEBUG", ""))
 
-COT_TAG = f"{APP_NAME}-1-"
+COT_TAG = f"{APP_NAME}-1"
 
-def create_tasks(config: SectionProxy, clitool: pytak.CLITool) -> Set[pytak.Worker,]:
-    """Create specific coroutine task set for this application.
+# W3C XMLSchema-instance namespace, used for ``xsi:type`` on signalInfo.
+XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 
-    Parameters
-    ----------
-    config : `SectionProxy`
-        Configuration options & values.
-    clitool : `pytak.CLITool`
-        A PyTAK Worker class instance.
 
-    Returns
-    -------
-    `set`
-        Set of PyTAK Worker classes for this application.
+# --------------------------------------------------------------------------- #
+# Geometry helpers
+# --------------------------------------------------------------------------- #
+def to_rad(deg: float) -> float:
+    """Convert degrees to radians."""
+    return deg * math.pi / 180.0
+
+
+def to_deg(rad: float) -> float:
+    """Convert radians to degrees."""
+    return rad * 180.0 / math.pi
+
+
+def calculate_second_point(
+    lat: float, lon: float, bearing_deg: float, distance_m: float
+) -> Tuple[float, float]:
+    """Project a point from (lat, lon) along a compass bearing for distance_m meters.
+
+    Bearing is in compass convention (0 = North, 90 = East), matching the
+    KrakenSDR "Max DOA Angle" output.
     """
-    tasks = set()
-    tasks.add(kraktak.KrakTAKWorker(clitool.tx_queue, config))
-    return tasks
+    r = kraktak.EARTH_RADIUS_M
+    lat1 = to_rad(lat)
+    lon1 = to_rad(lon)
+    bearing = to_rad(bearing_deg)
+    ang = distance_m / r
 
-
-def doa_to_cot_sensor_xml(  # NOQA pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    data: dict,
-    config: Union[SectionProxy, dict, None] = None,
-) -> Optional[ET.Element]:
-
-    remarks_fields = []
-    config = config or {}
-    
-    default_cot_val = '999999'
-
-    lat = data.latitude
-    lon = data.longitude
-    
-    if lat is None or lon is None:
-        Logger.warning(f"No value for lat={lat} lon={lon}")
-        return None
-
-    kraken_station = data.station
-    callsign = f"KrakenSDR {kraken_station}"
-    cot_uid = f"{COT_TAG}-KrakenSDR-{kraken_station}"
-    cot_type = "a-f-G-U-C"
-
-    cot_stale: int = int(config.get("COT_STALE", pytak.DEFAULT_COT_STALE))
-    cot_host_id: str = config.get("COT_HOST_ID", pytak.DEFAULT_HOST_ID)
-    ce = default_cot_val
-    le = default_cot_val
-    hae = default_cot_val
-
-    __krakensdr = ET.Element("__krakensdr")
-    # __krakensdr.set("cot_host_id", cot_host_id)
-    # __krakensdr.set("feed_url", config.get("FEED_URL", ""))
-
-    contact: ET.Element = ET.Element("contact")
-    contact.set("callsign", callsign)
-
-    uid = ET.Element("UID")
-    uid.set("Droid", str(callsign))
-
-    # remarks_fields.append(f"FEED_URL: {config.get('FEED_URL', '')}")
-    # Remarks should always be the first sub-entity within the Detail entity.
-    remarks = ET.Element("remarks")
-    remarks_fields.append(f"{cot_host_id}")
-    _remarks = " ".join(list(filter(None, remarks_fields)))
-    remarks.text = _remarks
-
-    __group = ET.Element("__group")
-    __group.set("name", config.get("COT_GROUP_NAME", "Yellow"))
-    __group.set("role", config.get("COT_GROUP_ROLE", "Team Member")) 
-
-    precisionlocation = ET.Element("precisionlocation")
-    geopointsrc = config.get("COT_GEOPOINTSRC", "GPS")
-    altsrc = config.get("COT_ALTSRC", "")
-    precisionlocation.set("geopointsrc", geopointsrc)
-    precisionlocation.set("altsrc", altsrc)
-
-    status = ET.Element("status")
-    battery = config.get("COT_BATTERY", default_cot_val)
-    status.set("battery", battery)
-
-    device = config.get("COT_DEVICE", "")
-    platform = config.get("COT_PLATFORM", "")
-    os = config.get("COT_OS", "")
-    version = config.get("COT_VERSION", "")
-    takv = ET.Element("takv")
-    takv.set("device", device)
-    takv.set("platform", platform)
-    takv.set("os", os)
-    takv.set("version", version)
-
-    speed = config.get("COT_SPEED", "0.00000000")
-    course = config.get("COT_COURSE", "")   
-    track = ET.Element("track")
-    track.set("speed", speed)
-    track.set("course", course)
-    track.set("slope", default_cot_val)
-    
-    color = ET.Element("color")
-    color.set("argb", "-256")  # Default color, can be changed if needed
-
-    usericon = ET.Element("usericon")
-    iconsetpath = config.get("COT_ICONSETPATH", "-256")
-    usericon.set("iconsetpath", iconsetpath)
-
-    detail = ET.Element("detail")
-    detail.append(contact)
-    # detail.append(remarks)
-    # detail.append(__krakensdr)
-    detail.append(uid)
-    detail.append(__group)
-    detail.append(precisionlocation)
-    # detail.append(status)
-    # detail.append(takv)
-    # detail.append(track)
-    detail.append(color)
-    # detail.append(usericon)
-
-    cot_d = {
-        "lat": str(lat),
-        "lon": str(lon),
-        "ce": str(0),
-        "le": str(0),
-        "hae": str(0),
-        "uid": cot_uid,
-        "cot_type": cot_type,
-        "stale": cot_stale,
-    }
-    cot = pytak.gen_cot_xml(**cot_d)
-    cot.set("access", config.get("COT_ACCESS", pytak.DEFAULT_COT_ACCESS))
-    cot.set("qos", "1-r-c")
-
-    _detail = cot.findall("detail")[0]
-    flowtags = _detail.findall("_flow-tags_")
-    detail.extend(flowtags)
-
-    cot.remove(_detail)
-    cot.append(detail)
-
-    return cot
-
-
-def doa_to_cot_line_xml(
-    data: dict,
-    config: Union[SectionProxy, dict, None] = None,
-) -> Optional[ET.Element]:
-    remarks_fields = []
-
-    config = config or {}
-
-    default_cot_val = '0.0'
-
-    lat = data.latitude
-    lon = data.longitude
-    if lat is None or lon is None:
-        Logger.warning(f"No value for lat={lat} lon={lon}")
-
-        return None
-    kraken_station = data.station
-
-    callsign = f"KrakenSDR {kraken_station} DOA {data.frequency} Hz"
-    cot_uid = f"{COT_TAG}-KrakenSDR-{kraken_station}-DOA-{data.frequency}"
-    cot_type = "u-d-f"
-
-    cot_stale: int = int(config.get("COT_STALE", pytak.DEFAULT_COT_STALE))
-
-    cot_host_id: str = config.get("COT_HOST_ID", pytak.DEFAULT_HOST_ID)
-    ce = default_cot_val
-    le = default_cot_val
-    hae = default_cot_val
-
-    # FIXME: No magic numbers!
-    MAGIC_NUMBER = 6
-    second_point = calculate_second_point(
-        data.latitude, data.longitude, data.max_doa_angle, MAGIC_NUMBER
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(ang)
+        + math.cos(lat1) * math.sin(ang) * math.cos(bearing)
     )
-
-    __krakensdr = ET.Element("__krakensdr")
-    # __krakensdr.set("cot_host_id", cot_host_id)
-    # __krakensdr.set("feed_url", config.get("FEED_URL", ""))
-
-    contact: ET.Element = ET.Element("contact")
-    contact.set("callsign", callsign)
-
-    uid = ET.Element("UID")
-    uid.set("Droid", str(callsign))
-
-    # remarks_fields.append(f"FEED_URL: {config.get('FEED_URL', '')}")
-    # Remarks should always be the first sub-entity within the Detail entity.
-    remarks = ET.Element("remarks")
-    remarks_fields.append(f"{cot_host_id}")
-    _remarks = " ".join(list(filter(None, remarks_fields)))
-    remarks.text = _remarks
-
-    __group = ET.Element("__group")
-    __group.set("name", config.get("COT_GROUP_NAME", "Yellow"))
-    __group.set("role", config.get("COT_GROUP_ROLE", "Team Member"))
-
-    precisionlocation = ET.Element("precisionlocation")
-    geopointsrc = config.get("COT_GEOPOINTSRC", "GPS")
-    altsrc = config.get("COT_ALTSRC", "")
-    precisionlocation.set("geopointsrc", geopointsrc)
-    precisionlocation.set("altsrc", altsrc)
-
-    status = ET.Element("status")
-    battery = config.get("COT_BATTERY", default_cot_val)
-    status.set("battery", battery)
-
-    device = config.get("COT_DEVICE", "")
-    platform = config.get("COT_PLATFORM", "")
-    os = config.get("COT_OS", "")
-    version = config.get("COT_VERSION", "")
-    takv = ET.Element("takv")
-    takv.set("device", device)
-    takv.set("platform", platform)
-    takv.set("os", os)
-    takv.set("version", version)
-
-    speed = config.get("COT_SPEED",
-        "0.00000000"
-    )  # Default speed, can be changed if needed
-    course = config.get("COT_COURSE", "")  # Default course, can be changed if needed
-    track = ET.Element("track")
-    track.set("speed", speed)
-    track.set("course", course)
-    track.set("slope", default_cot_val)
-    
-    color = ET.Element("color")
-    color.set("argb", "-256")  # Default color, can be changed if needed
-   
-    usericon = ET.Element("usericon")
-    iconsetpath = config.get("COT_ICONSETPATH", "-256")
-    usericon.set("iconsetpath", iconsetpath)
-    
-    point2 = ET.Element("point")
-    point2.set("lat", str(second_point[0]))
-    point2.set("lon", str(second_point[1]))
-    point2.set("hae", str(default_cot_val))
-    point2.set("ce", str(default_cot_val))
-    point2.set("le", str(default_cot_val))
-    
-    link = ET.Element("link")
-    link.set("point", f"{lat},{lon}")
-
-    link2 = ET.Element("link")
-    link2.set("point", f"{second_point[0]},{second_point[1]}")
-    # Set the point attribute for the second link
-
-    __shape_extras = ET.Element("__shapeExtras")
-    __shape_extras.set("cpvis", "true")
-    __shape_extras.set("editable", "true")
-
-    __milsym = ET.Element("__milsym")
-    __milsym.set("id", "10002500003406000000")  # Example ID, can be changed if needed
-
-    labels_on = ET.Element("labels_on")
-    labels_on.set("value", "false")  # Default value, can be changed if needed
-
-    # Create the detail element and append all sub-elements
-    detail = ET.Element("detail")
-    # detail.append(contact)
-    detail.append(remarks)
-    # detail.append(__krakensdr)
-    # detail.append(uid)
-    # detail.append(__group)
-    # detail.append(precisionlocation)
-    # detail.append(status)
-    # detail.append(takv)
-    # detail.append(track)
-    # detail.append(color)
-    # detail.append(usericon)
-    detail.append(link)
-    detail.append(link2)
-    # detail.append(__shape_extras)
-    # detail.append(__milsym)
-    # detail.append(labels_on)
-    detail.append(ET.Element("archive"))  # Empty archive element
-    detail.append(ET.Element("strokeColor", {"value": "-256"}))  # Default stroke color
-    detail.append(ET.Element("strokeWeight", {"value": "3.0"}))  # Default stroke weight
-    detail.append(ET.Element("strokeStyle", {"value": "solid"}))  # Default stroke style
+    lon2 = lon1 + math.atan2(
+        math.sin(bearing) * math.sin(ang) * math.cos(lat1),
+        math.cos(ang) - math.sin(lat1) * math.sin(lat2),
+    )
+    return (to_deg(lat2), to_deg(lon2))
 
 
-    # Create the CoT XML payload
-    cot_d = {
+def bearing_and_distance(
+    lat1: float, lon1: float, lat2: float, lon2: float
+) -> Tuple[float, float]:
+    """Return (distance_m, initial_bearing_deg) between two points (Haversine)."""
+    r = kraktak.EARTH_RADIUS_M
+    phi1 = to_rad(lat1)
+    phi2 = to_rad(lat2)
+    dphi = to_rad(lat2 - lat1)
+    dlambda = to_rad(lon2 - lon1)
+
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+    distance = r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    y = math.sin(dlambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(
+        dlambda
+    )
+    bearing = (to_deg(math.atan2(y, x)) + 360.0) % 360.0
+    return (distance, bearing)
+
+
+def bearing_to_color(bearing: float, alpha: int = 255) -> int:
+    """Map a compass bearing (0-360) to a signed 32-bit ARGB color (Android style)."""
+    hue = ((bearing % 360.0) + 360.0) % 360.0
+    c = 1.0
+    x = c * (1 - abs((hue / 60.0) % 2 - 1))
+    if hue < 60:
+        r, g, b = c, x, 0.0
+    elif hue < 120:
+        r, g, b = x, c, 0.0
+    elif hue < 180:
+        r, g, b = 0.0, c, x
+    elif hue < 240:
+        r, g, b = 0.0, x, c
+    elif hue < 300:
+        r, g, b = x, 0.0, c
+    else:
+        r, g, b = c, 0.0, x
+    ri, gi, bi = round(r * 255), round(g * 255), round(b * 255)
+    argb = ((alpha & 0xFF) << 24) | (ri << 16) | (gi << 8) | bi
+    # Convert to signed 32-bit, as TAK expects.
+    return argb - 0x100000000 if argb >= 0x80000000 else argb
+
+
+# --------------------------------------------------------------------------- #
+# Filtering
+# --------------------------------------------------------------------------- #
+def evaluate_angle_range(
+    start_angle: Union[int, str, None],
+    end_angle: Union[int, str, None],
+    max_doa_angle: Union[int, float, str],
+) -> bool:
+    """Return True if ``max_doa_angle`` is OUTSIDE the exclusion wedge.
+
+    A return of ``False`` means the angle falls inside the wedge and should be
+    dropped. If either bound is unset, no wedge is applied (always True).
+    """
+    if start_angle is None or end_angle is None or start_angle == "" or end_angle == "":
+        return True
+
+    start = int(float(start_angle)) % 360
+    end = int(float(end_angle)) % 360
+    angle = int(float(max_doa_angle)) % 360
+
+    if start <= end:
+        in_exclusion = start <= angle <= end
+    else:  # wedge wraps past 0
+        in_exclusion = angle >= start or angle <= end
+    return not in_exclusion
+
+
+def passes_filters(data, config: Union[SectionProxy, dict, None] = None) -> bool:
+    """Apply confidence/RSSI thresholds and the DOA exclusion wedge."""
+    config = config or {}
+
+    min_conf = config.get("MIN_CONFIDENCE", kraktak.DEFAULT_MIN_CONFIDENCE)
+    if min_conf not in ("", None) and data.confidence < float(min_conf):
+        Logger.debug("Dropped: confidence %s < %s", data.confidence, min_conf)
+        return False
+
+    min_rssi = config.get("MIN_RSSI", kraktak.DEFAULT_MIN_RSSI)
+    if min_rssi not in ("", None) and data.rssi < float(min_rssi):
+        Logger.debug("Dropped: rssi %s < %s", data.rssi, min_rssi)
+        return False
+
+    if not evaluate_angle_range(
+        config.get("DOA_IGNORE_START"),
+        config.get("DOA_IGNORE_END"),
+        data.max_doa_angle,
+    ):
+        Logger.debug("Dropped: bearing %s in exclusion wedge", data.max_doa_angle)
+        return False
+
+    return True
+
+
+# --------------------------------------------------------------------------- #
+# Internal builders
+# --------------------------------------------------------------------------- #
+def _lob_length_m(config) -> float:
+    val = config.get("LOB_LENGTH_M", "")
+    if val not in ("", None):
+        return float(val)
+    km = config.get("LOB_LENGTH_KM", "")
+    if km not in ("", None):
+        return float(km) * 1000.0
+    return kraktak.DEFAULT_LOB_LENGTH_M
+
+
+def _point_attrs(lat: float, lon: float, hae="0.0", ce="9999999.0", le="9999999.0"):
+    return {
         "lat": str(lat),
         "lon": str(lon),
+        "hae": str(hae),
         "ce": str(ce),
         "le": str(le),
-        "hae": str(hae),
-        "uid": cot_uid,
-        "cot_type": cot_type,
-        "stale": cot_stale,
     }
 
-    cot = pytak.gen_cot_xml(**cot_d)
+
+def _base_cot(
+    data, config, uid: str, cot_type: str, lat: float, lon: float
+) -> ET.Element:
+    """Build a base CoT ``event`` with point + empty detail (flow-tags preserved)."""
+    cot_stale = int(config.get("COT_STALE", pytak.DEFAULT_COT_STALE))
+    cot = pytak.gen_cot_xml(
+        lat=str(lat),
+        lon=str(lon),
+        ce="9999999.0",
+        le="9999999.0",
+        hae="9999999.0",
+        uid=uid,
+        cot_type=cot_type,
+        stale=cot_stale,
+    )
     cot.set("access", config.get("COT_ACCESS", pytak.DEFAULT_COT_ACCESS))
     cot.set("qos", "1-r-c")
-
-    _detail = cot.findall("detail")[0]
-    flowtags = _detail.findall("_flow-tags_")
-    detail.extend(flowtags)
-
-    cot.remove(_detail)
-    cot.append(detail)
-    cot.append(point2)
-
     return cot
 
 
-def doa_to_cot_lob_xml(
-    data: dict,
-    config: Union[SectionProxy, dict, None] = None,
-) -> Optional[ET.Element]:
-    remarks_fields = []
+def _swap_detail(cot: ET.Element, detail: ET.Element) -> ET.Element:
+    """Replace the auto-generated detail, preserving PyTAK ``_flow-tags_``."""
+    old = cot.findall("detail")[0]
+    detail.extend(old.findall("_flow-tags_"))
+    cot.remove(old)
+    cot.append(detail)
+    return cot
 
+
+def _signal_info(data, config) -> ET.Element:
+    """Build a schema-valid ``signalInfo`` (xsi:type RF) for __lob/__cep details."""
+    si = ET.Element("signalInfo")
+    si.set(f"{{{XSI_NS}}}type", "RF")
+    si.set("frequency", str(int(data.frequency)))
+    si.set("rssi", str(float(data.rssi)))
+    return si
+
+
+# --------------------------------------------------------------------------- #
+# Public CoT builders. Each takes (data: DOAValues, config) -> ET.Element|None
+# --------------------------------------------------------------------------- #
+def doa_to_cot_sensor(data, config=None) -> Optional[ET.Element]:
+    """The KrakenSDR station itself, as a friendly ground sensor marker."""
     config = config or {}
-
-    default_cot_val = '0.0'
-
-    lat = data.latitude
-    lon = data.longitude
+    lat, lon = data.latitude, data.longitude
     if lat is None or lon is None:
-        Logger.warning(f"No value for lat={lat} lon={lon}")
-
+        Logger.warning("No lat/lon for sensor CoT")
         return None
-    kraken_station = data.station
 
-    callsign = f"KrakenSDR {kraken_station} LOB {data.frequency} Hz"
-    cot_uid = f"{COT_TAG}-KrakenSDR-{kraken_station}-LOB-{data.frequency}"
-    cot_type = "b-d"
+    uid = f"{COT_TAG}.KrakenSDR.{data.station}"
+    cot = _base_cot(data, config, uid, "a-f-G-U-C", lat, lon)
 
-    cot_stale: int = int(config.get("COT_STALE", pytak.DEFAULT_COT_STALE))
-
-    cot_host_id: str = config.get("COT_HOST_ID", pytak.DEFAULT_HOST_ID)
-    ce = default_cot_val
-    le = default_cot_val
-    hae = default_cot_val
-
-    # FIXME: No magic numbers!
-    MAGIC_NUMBER = 6
-    second_point = calculate_second_point(
-        data.latitude, data.longitude, data.max_doa_angle, MAGIC_NUMBER
-    )
-
-    __krakensdr = ET.Element("__krakensdr")
-    # __krakensdr.set("cot_host_id", cot_host_id)
-    # __krakensdr.set("feed_url", config.get("FEED_URL", ""))
-
-    contact: ET.Element = ET.Element("contact")
-    contact.set("callsign", callsign)
-
-    uid = ET.Element("UID")
-    uid.set("Droid", str(callsign))
-
-    # remarks_fields.append(f"FEED_URL: {config.get('FEED_URL', '')}")
-    # Remarks should always be the first sub-entity within the Detail entity.
-    remarks = ET.Element("remarks")
-    remarks_fields.append(f"{cot_host_id}")
-    _remarks = " ".join(list(filter(None, remarks_fields)))
-    remarks.text = _remarks
-
-    __group = ET.Element("__group")
-    __group.set("name", config.get("COT_GROUP_NAME", "Yellow"))
-    __group.set("role", config.get("COT_GROUP_ROLE", "Team Member"))
-
-    precisionlocation = ET.Element("precisionlocation")
-    geopointsrc = config.get("COT_GEOPOINTSRC", "GPS")
-    altsrc = config.get("COT_ALTSRC", "")
-    precisionlocation.set("geopointsrc", geopointsrc)
-    precisionlocation.set("altsrc", altsrc)
-
-    status = ET.Element("status")
-    battery = config.get("COT_BATTERY", default_cot_val)
-    status.set("battery", battery)
-
-    device = config.get("COT_DEVICE", "")
-    platform = config.get("COT_PLATFORM", "")
-    os = config.get("COT_OS", "")
-    version = config.get("COT_VERSION", "")
-    takv = ET.Element("takv")
-    takv.set("device", device)
-    takv.set("platform", platform)
-    takv.set("os", os)
-    takv.set("version", version)
-
-    speed = config.get("COT_SPEED",
-        "0.00000000"
-    )  # Default speed, can be changed if needed
-    course = config.get("COT_COURSE", "")  # Default course, can be changed if needed
-    track = ET.Element("track")
-    track.set("speed", speed)
-    track.set("course", course)
-    track.set("slope", default_cot_val)
-    
-    color = ET.Element("color")
-    color.set("argb", "-256")  # Default color, can be changed if needed
-   
-    usericon = ET.Element("usericon")
-    iconsetpath = config.get("COT_ICONSETPATH", "-256")
-    usericon.set("iconsetpath", iconsetpath)
-    
-    __lob = ET.Element("__lob")
-    __lob.set("deviceType", "KrakenSDR")
-    __lob.set("rssi", str(data.rssi))
-    __lob.set("confidence", str(data.confidence))
-    __lob.set("unitId", str(data.station))
-    __lob.set("azimuth", str(data.max_doa_angle))
-    __lob.set("family", "com.snstac.kraktak")
-    # __lob.set("deviceTime", str(data.timestamp))
-    __lob.set("frequency", str(data.frequency))
-    # __lob.set("elevationAngle", str(0))
-
-    startLocation = ET.Element("startLocation")
-    startLocation.set("lat", str(lat))
-    startLocation.set("lon", str(lon))
-    startLocation.set("hae", str("0.0"))
-    startLocation.set("ce", str("0.0"))
-    startLocation.set("le", str("0.0"))
-
-    __rf = ET.Element("__rf")
-    __rf.set("rssi", str(data.rssi))
-    # __rf.set("uplinkRssi", str(data.uplink_rssi))
-    # __rf.set("downlinkRssi", str(data.downlink_rssi))
-    # __rf.set("tag", str(data.tag))
-    # __rf.set("errorRadius", str(data.error_radius))
-    __rf.set("comments", str("test comment"))
-    __rf.set("frequency", str(data.frequency))
-
-    __lob.append(startLocation)
-    __lob.append(__rf)
-
-    link = ET.Element("link")
-    link.set("point", f"{lat},{lon}")
-
-    __shape_extras = ET.Element("__shapeExtras")
-    __shape_extras.set("cpvis", "true")
-    __shape_extras.set("editable", "true")
-
-    __milsym = ET.Element("__milsym")
-    __milsym.set("id", "10002500003406000000")  # Example ID, can be changed if needed
-
-    labels_on = ET.Element("labels_on")
-    labels_on.set("value", "false")  # Default value, can be changed if needed
-
-    # Create the detail element and append all sub-elements
     detail = ET.Element("detail")
-    detail.append(contact)
-    # detail.append(remarks)
-    # detail.append(__krakensdr)
-    # detail.append(uid)
-    # detail.append(__group)
-    # detail.append(precisionlocation)
-    # detail.append(status)
-    # detail.append(takv)
-    # detail.append(track)
-    # detail.append(color)
-    # detail.append(usericon)
-    # detail.append(link)
-    # detail.append(__shape_extras)
-    # detail.append(__milsym)
-    # detail.append(labels_on)
-    # detail.append(ET.Element("archive"))  # Empty archive element
-    # detail.append(ET.Element("strokeColor", {"value": "-256"}))  # Default stroke color
-    # detail.append(ET.Element("strokeWeight", {"value": "3.0"}))  # Default stroke weight
-    # detail.append(ET.Element("strokeStyle", {"value": "solid"}))  # Default stroke style
-    detail.append(__lob)
+    contact = ET.SubElement(detail, "contact")
+    contact.set("callsign", f"KrakenSDR {data.station}")
+    group = ET.SubElement(detail, "__group")
+    group.set("name", config.get("COT_GROUP_NAME", "Yellow"))
+    group.set("role", config.get("COT_GROUP_ROLE", "Team Member"))
+    remarks = ET.SubElement(detail, "remarks")
+    remarks.text = (
+        f"KrakenSDR {data.station} | {data.frequency} Hz | "
+        f"conf {data.confidence} | rssi {data.rssi} dB"
+    )
+    return _swap_detail(cot, detail)
 
-    # Create the CoT XML payload
-    cot_d = {
-        "lat": str(lat),
-        "lon": str(lon),
-        "ce": str("0.0"),
-        "le": str("0.0"),
-        "hae": str("0.0"),
-        "uid": cot_uid,
-        "cot_type": cot_type,
-        "stale": cot_stale,
-        # "how": "u-X"
-    }
 
-    cot = pytak.gen_cot_xml(**cot_d)
-    cot.set("access", config.get("COT_ACCESS", pytak.DEFAULT_COT_ACCESS))
-    cot.set("qos", "1-r-c")
+def doa_to_cot_bearing_line(data, config=None) -> Optional[ET.Element]:
+    """A line-of-bearing drawn from the station along the DOA (u-d-f)."""
+    config = config or {}
+    lat, lon = data.latitude, data.longitude
+    if lat is None or lon is None:
+        Logger.warning("No lat/lon for bearing line CoT")
+        return None
 
-    _detail = cot.findall("detail")[0]
-    flowtags = _detail.findall("_flow-tags_")
-    detail.extend(flowtags)
+    length_m = _lob_length_m(config)
+    end_lat, end_lon = calculate_second_point(lat, lon, data.max_doa_angle, length_m)
 
-    cot.remove(_detail)
-    cot.append(detail)
+    if str(config.get("PERSIST_LOB", "")).lower() in ("1", "true", "yes"):
+        uid = f"{COT_TAG}.{data.station}.LOB.{random.randint(1000, 9999)}"
+    else:
+        uid = f"{COT_TAG}.{data.station}.LOB.{data.frequency}"
 
+    cot = _base_cot(data, config, uid, "u-d-f", lat, lon)
+    color = bearing_to_color(data.max_doa_angle)
+
+    detail = ET.Element("detail")
+    contact = ET.SubElement(detail, "contact")
+    contact.set("callsign", f"KrakenSDR {data.station} {data.frequency} Hz")
+    ET.SubElement(detail, "link", {"point": f"{lat},{lon}"})
+    ET.SubElement(detail, "link", {"point": f"{end_lat},{end_lon}"})
+    ET.SubElement(detail, "remarks").text = (
+        f"DOA {data.max_doa_angle} deg | conf {data.confidence} | rssi {data.rssi} dB"
+    )
+    ET.SubElement(detail, "strokeColor", {"value": str(color)})
+    ET.SubElement(detail, "strokeWeight", {"value": "3.0"})
+    ET.SubElement(detail, "strokeStyle", {"value": "solid"})
+    ET.SubElement(detail, "labels_on", {"value": "false"})
+    ET.SubElement(detail, "archive")
+
+    cot = _swap_detail(cot, detail)
+    # A u-d-f line carries a second <point> for its endpoint.
+    cot.append(ET.Element("point", _point_attrs(end_lat, end_lon)))
     return cot
 
 
-def cot_to_xml(
-    data: dict,
-    config: Union[SectionProxy, dict, None] = None,
-    func=None,
+def doa_to_cot_range_bearing(data, config=None) -> Optional[ET.Element]:
+    """A TAK Range & Bearing line (u-rb-a) along the DOA."""
+    config = config or {}
+    lat, lon = data.latitude, data.longitude
+    if lat is None or lon is None:
+        Logger.warning("No lat/lon for range/bearing CoT")
+        return None
+
+    length_m = _lob_length_m(config)
+    uid = f"{COT_TAG}.{data.station}.RB.{data.frequency}"
+    cot = _base_cot(data, config, uid, "u-rb-a", lat, lon)
+    color = bearing_to_color(data.max_doa_angle)
+
+    detail = ET.Element("detail")
+    ET.SubElement(detail, "range", {"value": str(length_m)})
+    ET.SubElement(detail, "bearing", {"value": str(float(data.max_doa_angle))})
+    ET.SubElement(detail, "inclination", {"value": "0.0"})
+    ET.SubElement(detail, "rangeUnits", {"value": "1"})
+    ET.SubElement(detail, "bearingUnits", {"value": "0"})
+    ET.SubElement(detail, "northRef", {"value": "1"})
+    ET.SubElement(detail, "strokeColor", {"value": str(color)})
+    ET.SubElement(detail, "strokeWeight", {"value": "3.0"})
+    contact = ET.SubElement(detail, "contact")
+    contact.set("callsign", f"KrakenSDR {data.station} {data.frequency} Hz")
+    ET.SubElement(detail, "remarks").text = (
+        f"conf {data.confidence} | rssi {data.rssi} dB"
+    )
+    ET.SubElement(detail, "archive")
+    ET.SubElement(detail, "labels_on", {"value": "false"})
+    ET.SubElement(detail, "color", {"value": str(color)})
+    return _swap_detail(cot, detail)
+
+
+def doa_to_cot_lob(data, config=None) -> Optional[ET.Element]:
+    """A native TAK ``__lob`` detection (schema-valid per __lob.xsd)."""
+    config = config or {}
+    lat, lon = data.latitude, data.longitude
+    if lat is None or lon is None:
+        Logger.warning("No lat/lon for __lob CoT")
+        return None
+
+    uid = f"{COT_TAG}.{data.station}.lob.{data.frequency}"
+    cot_type = config.get("COT_TYPE_LOB", "a-u-G")
+    cot = _base_cot(data, config, uid, cot_type, lat, lon)
+
+    family = config.get("COT_FAMILY", kraktak.DEFAULT_COT_FAMILY)
+    device_type = config.get("DEVICE_TYPE", kraktak.DEFAULT_DEVICE_TYPE)
+
+    lob = ET.Element("__lob")
+    lob.set("azimuth", str(float(data.max_doa_angle)))
+    lob.set("rssi", str(float(data.rssi)))
+    lob.set("confidence", str(int(data.confidence)))
+    lob.set("family", family)
+    lob.set("deviceType", device_type)
+    lob.set("unitId", str(data.station))
+    lob.set("deviceTime", str(int(data.timestamp)))
+    # Sequence order per schema: signalInfo, then __startLocation.
+    lob.append(_signal_info(data, config))
+    ET.SubElement(lob, "__startLocation", _point_attrs(lat, lon, hae="0.0",
+                                                       ce="0.0", le="0.0"))
+
+    detail = ET.Element("detail")
+    contact = ET.SubElement(detail, "contact")
+    contact.set("callsign", f"KrakenSDR {data.station} LOB {data.frequency} Hz")
+    detail.append(lob)
+    return _swap_detail(cot, detail)
+
+
+def doa_to_cot_cep(data, config=None) -> Optional[ET.Element]:
+    """A ``__cep`` error ellipse (schema-valid per __cep.xsd).
+
+    Confidence (0-99) is mapped to an ellipse radius: lower confidence -> larger
+    ellipse. The ellipse is centered at ``center_lat``/``center_lon`` if present
+    on ``data`` (e.g. a multi-station fix), otherwise at the station location.
+    """
+    config = config or {}
+    lat = getattr(data, "center_lat", None) or data.latitude
+    lon = getattr(data, "center_lon", None) or data.longitude
+    if lat is None or lon is None:
+        Logger.warning("No lat/lon for __cep CoT")
+        return None
+
+    max_radius = float(config.get("CEP_MAX_RADIUS_M", "2000"))
+    min_radius = float(config.get("CEP_MIN_RADIUS_M", "100"))
+    conf = max(0.0, min(99.0, float(data.confidence)))
+    major = min_radius + (max_radius - min_radius) * (1.0 - conf / 99.0)
+    minor = major * 0.5
+
+    family = config.get("COT_FAMILY", kraktak.DEFAULT_COT_FAMILY)
+    device_type = config.get("DEVICE_TYPE", kraktak.DEFAULT_DEVICE_TYPE)
+
+    uid = f"{COT_TAG}.{data.station}.cep.{data.frequency}"
+    cot = _base_cot(data, config, uid, config.get("COT_TYPE_CEP", "a-u-G"), lat, lon)
+
+    cep = ET.Element("__cep")
+    cep.set("majorRadius", str(round(major, 2)))
+    cep.set("minorRadius", str(round(minor, 2)))
+    cep.set("ellipseHeading", str(float(data.max_doa_angle)))
+    cep.set("family", family)
+    cep.set("deviceType", device_type)
+    cep.set("unitId", str(data.station))
+    cep.set("deviceTime", str(int(data.timestamp)))
+    cep.append(_signal_info(data, config))
+    ET.SubElement(cep, "centerLocation", _point_attrs(lat, lon, hae="0.0",
+                                                      ce="0.0", le="0.0"))
+
+    detail = ET.Element("detail")
+    contact = ET.SubElement(detail, "contact")
+    contact.set("callsign", f"KrakenSDR {data.station} CEP {data.frequency} Hz")
+    detail.append(cep)
+    return _swap_detail(cot, detail)
+
+
+# Map of COT_TYPES tokens -> builder functions.
+COT_BUILDERS = {
+    "sensor": doa_to_cot_sensor,
+    "bearing_line": doa_to_cot_bearing_line,
+    "range_bearing": doa_to_cot_range_bearing,
+    "lob": doa_to_cot_lob,
+    "cep": doa_to_cot_cep,
+}
+
+
+def selected_builders(config) -> List[str]:
+    """Return the list of builder tokens enabled via COT_TYPES."""
+    raw = (config.get("COT_TYPES", kraktak.DEFAULT_COT_TYPES) or "").strip()
+    tokens = [t.strip() for t in raw.split(",") if t.strip()]
+    return [t for t in tokens if t in COT_BUILDERS]
+
+
+def cot_to_xml(data, config=None, func: Optional[str] = None) -> Optional[bytes]:
+    """Render a DOAValues record to a CoT XML byte-string via the named builder."""
+    config = config or {}
+    builder = COT_BUILDERS.get(func or "bearing_line")
+    if builder is None:
+        Logger.warning("Unknown CoT builder: %s", func)
+        return None
+    cot: Optional[ET.Element] = builder(data, config)
+    if cot is None:
+        Logger.debug("No CoT XML generated for %s", func)
+        return None
+    return b"\n".join([pytak.DEFAULT_XML_DECLARATION, ET.tostring(cot)])
+
+
+def gen_geochat(
+    message: str, config=None, target_uid: str = "All Chat Rooms"
 ) -> Optional[bytes]:
-    """Return a CoT XML object as an XML string, using the given func."""
-    func = func or "ais_to_cot"
-    cot: Optional[ET.Element] = getattr(kraktak.functions, func)(
-        data, config, 
-    )
-    if cot is not None:
-        return b"\n".join([pytak.DEFAULT_XML_DECLARATION, ET.tostring(cot)])
-    Logger.debug("No CoT XML generated.")
-    return None
+    """Build a minimal TAK GeoChat CoT carrying ``message`` to ``target_uid``."""
+    config = config or {}
+    sender_uid = config.get("COT_HOST_ID", pytak.DEFAULT_HOST_ID) or "KrakTAK"
+    sender_cs = config.get("CONTROL_CALLSIGN", "KrakTAK")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    stale = now + datetime.timedelta(seconds=60)
+    fmt = "%Y-%m-%dT%H:%M:%S.000Z"
+    msg_id = str(uuid.uuid4())
+
+    event = ET.Element("event")
+    event.set("version", "2.0")
+    event.set("uid", f"GeoChat.{sender_uid}.{target_uid}.{msg_id}")
+    event.set("type", "b-t-f")
+    event.set("how", "h-g-i-g-o")
+    event.set("time", now.strftime(fmt))
+    event.set("start", now.strftime(fmt))
+    event.set("stale", stale.strftime(fmt))
+    ET.SubElement(event, "point", _point_attrs(0.0, 0.0))
+
+    detail = ET.SubElement(event, "detail")
+    chat = ET.SubElement(detail, "__chat")
+    chat.set("parent", "RootContactGroup")
+    chat.set("groupOwner", "false")
+    chat.set("messageId", msg_id)
+    chat.set("chatroom", target_uid)
+    chat.set("id", target_uid)
+    chat.set("senderCallsign", sender_cs)
+    chatgrp = ET.SubElement(chat, "chatgrp")
+    chatgrp.set("uid0", sender_uid)
+    chatgrp.set("uid1", target_uid)
+    chatgrp.set("id", target_uid)
+
+    link = ET.SubElement(detail, "link")
+    link.set("uid", sender_uid)
+    link.set("type", "a-f-G")
+    link.set("relation", "p-p")
+
+    remarks = ET.SubElement(detail, "remarks")
+    remarks.set("source", f"BAO.F.KrakTAK.{sender_uid}")
+    remarks.set("to", target_uid)
+    remarks.set("time", now.strftime(fmt))
+    remarks.text = message
+
+    return b"\n".join([pytak.DEFAULT_XML_DECLARATION, ET.tostring(event)])
 
 
-# Function to calculate the second point
-def calculate_second_point(lat1, lon1, bearing_deg, distance_m):
-    """
-    Calculate the latitude and longitude of a point given a start point,
-    initial bearing, and distance.
+def create_tasks(config: SectionProxy, clitool: pytak.CLITool) -> set:
+    """Create the coroutine task set for this application."""
+    tasks = set()
+    tasks.add(kraktak.KrakTAKWorker(clitool.tx_queue, config))
 
-    Parameters
-    ----------
-    lat1 : float
-        Latitude of the starting point in degrees.
-    lon1 : float
-        Longitude of the starting point in degrees.
-    bearing_deg : float
-        Initial bearing in degrees.
-    distance_m : float
-        Distance to the second point in meters.
+    enable_control = str(
+        config.get("ENABLE_CONTROL", kraktak.DEFAULT_ENABLE_CONTROL)
+    ).lower() in ("1", "true", "yes")
+    if enable_control:
+        # Imported lazily so the core bridge has no hard control-plane deps.
+        from kraktak.control import KrakenControlWorker
 
-    Returns
-    -------
-    tuple
-        (latitude, longitude) of the second point in degrees.
-    """
-    # Convert inputs to radians
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    bearing_rad = math.radians(bearing_deg)
-
-    # Earth's radius in meters
-    earth_radius = getattr(kraktak, "EARTH_RADIUS", 6371000)
-
-    # Angular distance
-    angular_distance = distance_m / earth_radius
-
-    # Calculate new latitude
-    lat2_rad = math.asin(
-        math.sin(lat1_rad) * math.cos(angular_distance) +
-        math.cos(lat1_rad) * math.sin(angular_distance) * math.cos(bearing_rad)
-    )
-
-    # Calculate new longitude
-    lon2_rad = lon1_rad + math.atan2(
-        math.sin(bearing_rad) * math.sin(angular_distance) * math.cos(lat1_rad),
-        math.cos(angular_distance) - math.sin(lat1_rad) * math.sin(lat2_rad)
-    )
-
-    # Convert results back to degrees
-    lat2 = math.degrees(lat2_rad)
-    lon2 = math.degrees(lon2_rad)
-
-    return lat2, lon2
-
-
-def evaluate_angle_range(start_angle, end_angle, max_doa_angle):
-    """
-    Determines if max_doa_angle falls within the exclusion wedge defined by start_angle and end_angle.
-
-    Returns True if payloads should be sent (angle is outside exclusion wedge),
-    False if max_doa_angle is within the exclusion wedge.
-
-    Parameters
-    ----------
-    start_angle : int or str
-        Start of the exclusion wedge (degrees, 0-359).
-    end_angle : int or str
-        End of the exclusion wedge (degrees, 0-359).
-    max_doa_angle : int or str
-        Angle to evaluate (degrees, 0-359).
-
-    Returns
-    -------
-    bool
-        True if angle is outside exclusion wedge, False otherwise.
-    """
-    if start_angle is None or end_angle is None:
-        print("No DOA Ignore wedge set")
-        return True
-
-    # Normalize angles to [0, 359]
-    start_angle = int(start_angle) % 360
-    end_angle = int(end_angle) % 360
-    max_doa_angle = int(max_doa_angle) % 360
-
-    if start_angle <= end_angle:
-        # Simple range: exclusion wedge does not wrap around 0
-        in_exclusion = start_angle <= max_doa_angle <= end_angle
-    else:
-        # Wrapped range: exclusion wedge crosses 0
-        in_exclusion = max_doa_angle >= start_angle or max_doa_angle <= end_angle
-
-    if in_exclusion:
-        print("max doa angle between exclusion wedge.")
-        return False
-    else:
-        print("sending payloads")
-        return True
-
-
-# Function to generate uid_line with a random number every second
-def generate_uid_line():
-    uid_line = f'DOA-to-TAK-{random.randint(1000, 9999)}'
-    return uid_line 
-
-
-
-# Function to get GPS data
-def get_gps_data():
-    try:
-        gpsd.connect()
-        packet = gpsd.get_current()
-        latitude = getattr(packet, 'lat', None)
-        longitude = getattr(packet, 'lon', None)
-
-        # If GPSD data is available, return it
-        if latitude is not None and longitude is not None:
-            return latitude, longitude
-        
-    except Exception as e:
-        # Log any errors encountered while connecting to GPSD
-        logging.error(f"Error connecting to GPSD: {e}")
-
-    # If GPSD is not available or encountered an error, use alternate source (if available)
-    try:
-        # Fetch data from Kraken server
-        kraken_response = requests.get(url(kraken_server))
-        kraken_data = kraken_response.text
-
-        # Split the data and extract latitude and longitude
-        data_parts = kraken_data.split(',')
-        latitude_kraken = float(data_parts[8])
-        longitude_kraken = float(data_parts[9])
-        
-        # If alternate source data is available, return it
-        return latitude_kraken, longitude_kraken
-    
-    except Exception as e:
-        # Log any errors encountered while using alternate source
-        logging.error(f"Error using alternate source for GPS data: {e}")
-
-    # If both GPSD and alternate source fail, return None
-    return None, None
-
-
+        tasks.add(KrakenControlWorker(clitool.rx_queue, config, clitool.tx_queue))
+    return tasks

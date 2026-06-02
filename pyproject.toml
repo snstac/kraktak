@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kraktak"
+dynamic = [
+  "version",
+  "description",
+  "readme",
+  "requires-python",
+  "license",
+  "keywords",
+  "classifiers",
+  "dependencies",
+  "optional-dependencies",
+  "scripts",
+  "entry-points",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+norecursedirs = [
+  ".git",
+  ".venv",
+  "build",
+  "deb_dist",
+  "dist",
+  "site",
+  "takline",
+  "takcot-master",
+]

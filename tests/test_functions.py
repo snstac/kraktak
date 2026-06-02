@@ -1,236 +1,90 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-#
-# Copyright Sensors & Signals LLC https://www.snstac.com
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
+"""Tests for KrakTAK CoT builders, geometry, and filters."""
 
-"""KrakTAK Function Tests."""
+import xml.etree.ElementTree as ET
 
-import unittest
-import xml.etree.ElementTree as etree
+import pytest
 
 import kraktak
+from kraktak import functions
 
-TEST_FEED = {
-    "aircraft": [
-        {
-            "alt_baro": 3700,
-            "alt_geom": 3750,
-            "category": "A1",
-            "flight": "N739UL  ",
-            "geom_rate": 512,
-            "gs": 79.5,
-            "gva": 2,
-            "hex": "a9ee47",
-            "lat": 37.836449,
-            "lon": -122.030281,
-            "messages": 34,
-            "mlat": [],
-            "nac_p": 10,
-            "nac_v": 2,
-            "nic": 9,
-            "nic_baro": 0,
-            "rc": 75,
-            "rssi": -15.8,
-            "sda": 2,
-            "seen": 0.2,
-            "seen_pos": 1.0,
-            "sil": 3,
-            "sil_type": "perhour",
-            "tisb": [],
-            "track": 50.1,
-            "version": 2,
-            "reg": "test_reg_1234",
-            "squawk": "3514",
-            "t": "test_craft_type_1234",
-        },
-        {
-            "alt_baro": 37000,
-            "alt_geom": 38650,
-            "baro_rate": 0,
-            "gs": 487.6,
-            "hex": "3c4586",
-            "messages": 10,
-            "mlat": [],
-            "nac_v": 1,
-            "rssi": -18.2,
-            "seen": 17.0,
-            "tisb": [],
-            "track": 171.3,
-            "version": 0,
-        },
-        {
-            "alt_baro": 39000,
-            "hex": "a18b41",
-            "lat": 39.455023,
-            "lon": -120.402344,
-            "messages": 17,
-            "mlat": [],
-            "nac_p": 10,
-            "nav_altitude_mcp": 39008,
-            "nav_modes": ["autopilot", "vnav", "tcas"],
-            "nav_qnh": 1013.6,
-            "nic": 8,
-            "nic_baro": 1,
-            "rc": 186,
-            "rssi": -18.9,
-            "seen": 3.2,
-            "seen_pos": 12.6,
-            "sil": 3,
-            "sil_type": "unknown",
-            "squawk": "3514",
-            "tisb": [],
-            "version": 0,
-        },
-        {
-            "alt_baro": 17650,
-            "alt_geom": 18650,
-            "baro_rate": -2112,
-            "category": "A3",
-            "flight": "SWA1241 ",
-            "gs": 353.4,
-            "hex": "abd994",
-            "messages": 14,
-            "mlat": [],
-            "nac_p": 8,
-            "nac_v": 1,
-            "nav_altitude_mcp": 3392,
-            "nav_heading": 308.0,
-            "nav_qnh": 1013.6,
-            "nic_baro": 1,
-            "rssi": -18.1,
-            "seen": 16.7,
-            "sil": 2,
-            "sil_type": "unknown",
-            "tisb": [],
-            "track": 321.1,
-            "version": 0,
-        },
+
+def _event(out: bytes) -> ET.Element:
+    return ET.fromstring(out.split(b"\n", 1)[1])
+
+
+@pytest.mark.parametrize(
+    "builder,cot_type",
+    [
+        ("sensor", "a-f-G-U-C"),
+        ("bearing_line", "u-d-f"),
+        ("range_bearing", "u-rb-a"),
+        ("lob", "a-u-G"),
+        ("cep", "a-u-G"),
     ],
-    "messages": 1799595081,
-    "now": 1602849987.1,
-}
-
-ADSBX_TEST_DATA = {
-    "hex": "7805dc",
-    "type": "adsb_icao",
-    "flight": "CKK223  ",
-    "gs": 541.8,
-    "track": 124.78,
-    "baro_rate": -64,
-    "category": "A5",
-    "lastPosition": {
-        "lat": 37.370833,
-        "lon": -124.300033,
-        "nic": 8,
-        "rc": 186,
-        "seen_pos": 101.437,
-    },
-    "version": 2,
-    "nac_v": 1,
-    "sil_type": "perhour",
-    "mlat": [],
-    "tisb": [],
-    "messages": 151,
-    "seen": 12.4,
-    "rssi": -18.2,
-}
+)
+def test_builders_produce_expected_type(doa, builder, cot_type):
+    out = kraktak.cot_to_xml(doa, {}, builder)
+    assert out is not None
+    event = _event(out)
+    assert event.tag == "event"
+    assert event.attrib["type"] == cot_type
+    assert "kraktak" in event.attrib["uid"]
 
 
-class FunctionsTestCase(unittest.TestCase):
-    """
-    Test class for functions... functions.
-    """
-
-    def test_adsb_to_cot_xml(self):
-        """Test that adsb_to_cot serializses ADS-B as valid Cursor on Target XML Object."""
-        aircraft = TEST_FEED["aircraft"]
-        craft = aircraft[0]
-        cot = kraktak.functions.adsb_to_cot_xml(craft)
-        print("COT: %s", cot)
-        assert isinstance(cot, etree.Element)
-        assert cot.tag == "event"
-        assert cot.attrib["version"] == "2.0"
-        assert cot.attrib["type"] == "a-n-A-C-F"
-        assert cot.attrib["uid"] == "ICAO-A9EE47"
-
-        point = cot.findall("point")
-        assert point[0].tag == "point"
-        assert point[0].attrib["lat"] == "37.836449"
-        assert point[0].attrib["lon"] == "-122.030281"
-        assert point[0].attrib["hae"] == "1143.0"
-
-        detail = cot.findall("detail")
-        assert detail[0].tag == "detail"
-
-        track = detail[0].findall("track")
-        assert track[0].attrib["course"] == "50.1"
-        assert track[0].attrib["speed"] == "40.898298000000004"
-
-    def test_adsb_to_cot(self):
-        """Test that adsb_to_cot serializses ADS-B as valid Cursor on Target XML String."""
-        aircraft = TEST_FEED["aircraft"]
-        craft = aircraft[0]
-        cot = kraktak.functions.adsb_to_cot(craft)
-        assert b"ICAO-A9EE47" in cot
-        assert b"a-n-A-C-F" in cot
-        assert b"37.836449" in cot
-        assert b"-122.030281" in cot
-        assert b"1143.0" in cot
-
-    def test_adsb_to_cot_no_lat(self):
-        """Test that adsb_to_cot rejects adsb with not valid latitude."""
-        aircraft = TEST_FEED["aircraft"]
-        craft = aircraft[2]
-        del craft["lat"]
-        cot = kraktak.functions.adsb_to_cot_xml(craft)
-        assert cot is None
-
-    def test_adsb_to_cot_no_lon(self):
-        """Test that adsb_to_cot rejects adsb with not valid longitude."""
-        aircraft = TEST_FEED["aircraft"]
-        craft = aircraft[2]
-        del craft["lon"]
-        cot = kraktak.functions.adsb_to_cot_xml(craft)
-        assert cot is None
-
-    def test_adsbx_to_cot_xml(self):
-        """Test that adsb_to_cot serializses ADS-B as valid Cursor on Target XML Object."""
-        craft = ADSBX_TEST_DATA
-        print("ADSBX Data: %s", craft)
-        cot = kraktak.functions.adsb_to_cot_xml(craft)
-        print("COT: %s", cot)
-        assert isinstance(cot, etree.Element)
-        assert cot.tag == "event"
-        assert cot.attrib["version"] == "2.0"
-        assert cot.attrib["type"] == "a-n-A-C-F"
-        assert cot.attrib["uid"] == "ICAO-7805DC"
-
-        point = cot.findall("point")
-        assert point[0].tag == "point"
-        assert point[0].attrib["lat"] == "37.370833"
-        assert point[0].attrib["lon"] == "-124.300033"
-        assert point[0].attrib["hae"] == "9999999.0"
-
-        detail = cot.findall("detail")
-        assert detail[0].tag == "detail"
-
-        track = detail[0].findall("track")
-        assert track[0].attrib["course"] == "124.78"
-        assert track[0].attrib["speed"] == "278.72575919999997"
+def test_bearing_line_has_endpoint(doa):
+    event = _event(kraktak.cot_to_xml(doa, {}, "bearing_line"))
+    points = event.findall("point")
+    assert len(points) == 2  # base point + LOB endpoint
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_lob_structure(doa):
+    event = _event(kraktak.cot_to_xml(doa, {}, "lob"))
+    lob = event.find(".//detail/__lob")
+    assert lob is not None
+    assert lob.attrib["azimuth"] == "135.0"
+    assert lob.attrib["unitId"] == "CTIKraken"
+    assert lob.find("signalInfo") is not None
+    assert lob.find("__startLocation") is not None
+
+
+def test_no_position_returns_none(doa):
+    doa.latitude = None
+    assert functions.doa_to_cot_bearing_line(doa, {}) is None
+
+
+def test_selected_builders_filters_invalid():
+    cfg = {"COT_TYPES": "bearing_line,bogus,lob"}
+    assert kraktak.selected_builders(cfg) == ["bearing_line", "lob"]
+
+
+def test_calculate_second_point_distance():
+    lat2, lon2 = functions.calculate_second_point(0.0, 0.0, 90.0, 111000.0)
+    # Due east ~1 degree of longitude at the equator.
+    dist, bearing = functions.bearing_and_distance(0.0, 0.0, lat2, lon2)
+    assert abs(dist - 111000.0) < 50
+    assert abs(bearing - 90.0) < 0.5
+
+
+def test_exclusion_wedge():
+    # Wedge 90-180: inside is dropped (False), outside passes (True).
+    assert functions.evaluate_angle_range(90, 180, 135) is False
+    assert functions.evaluate_angle_range(90, 180, 200) is True
+    # Wrapping wedge 350-10 across north.
+    assert functions.evaluate_angle_range(350, 10, 5) is False
+    assert functions.evaluate_angle_range(350, 10, 180) is True
+    # No wedge configured.
+    assert functions.evaluate_angle_range(None, None, 42) is True
+
+
+def test_passes_filters(doa):
+    assert functions.passes_filters(doa, {}) is True
+    assert functions.passes_filters(doa, {"MIN_CONFIDENCE": "90"}) is False
+    assert functions.passes_filters(doa, {"MIN_RSSI": "0"}) is False
+
+
+def test_gen_geochat(doa):
+    out = kraktak.gen_geochat("hello", {}, "ANDROID-1")
+    event = ET.fromstring(out.split(b"\n", 1)[1])
+    assert event.attrib["type"] == "b-t-f"
+    assert event.find(".//__chat").attrib["chatroom"] == "ANDROID-1"
+    assert event.find(".//remarks").text == "hello"

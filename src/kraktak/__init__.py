@@ -16,14 +16,52 @@
 # limitations under the License.
 #
 
-"""Next-gen Kraken to TAK Bridge."""
+"""KrakTAK: Next-gen KrakenSDR to TAK bridge with TAK-side control."""
 
 from .constants import (  # NOQA
-    DEFAULT_POLL_INTERVAL,
+    DEFAULT_API_AGENT_PORT,
+    DEFAULT_CONTROL_BACKEND,
+    DEFAULT_COT_FAMILY,
+    DEFAULT_COT_TYPES,
+    DEFAULT_DEVICE_TYPE,
+    DEFAULT_DSP_PORT,
+    DEFAULT_ENABLE_CONTROL,
     DEFAULT_FEED_URL,
-    EARTH_RADIUS
+    DEFAULT_LOB_LENGTH_M,
+    DEFAULT_MIDDLEWARE_PORT,
+    DEFAULT_MIN_CONFIDENCE,
+    DEFAULT_MIN_RSSI,
+    DEFAULT_POLL_INTERVAL,
+    DOA_IDX_ARRANGEMENT,
+    DOA_IDX_COMPASS_HEADING,
+    DOA_IDX_CONFIDENCE,
+    DOA_IDX_EPOCH_MS,
+    DOA_IDX_FREQUENCY_HZ,
+    DOA_IDX_GPS_HEADING,
+    DOA_IDX_HEADING_SENSOR,
+    DOA_IDX_LATENCY_MS,
+    DOA_IDX_LATITUDE,
+    DOA_IDX_LONGITUDE,
+    DOA_IDX_MAX_ANGLE,
+    DOA_IDX_POWER_START,
+    DOA_IDX_RSSI,
+    DOA_IDX_STATION_ID,
+    DOA_MIN_FIELDS,
+    EARTH_RADIUS_M,
+    MAX_TUNE_MHZ,
+    MIN_TUNE_MHZ,
+    VALID_GAINS,
 )
 
-from .functions import create_tasks, cot_to_xml  # NOQA
+from . import functions  # NOQA
 
-from .classes import KrakTAKWorker  # NOQA
+from .functions import (  # NOQA
+    cot_to_xml,
+    create_tasks,
+    gen_geochat,
+    selected_builders,
+)
+
+from .classes import DOAValues, KrakTAKWorker, parse_doa_csv  # NOQA
+
+__version__ = "10.0.0"
