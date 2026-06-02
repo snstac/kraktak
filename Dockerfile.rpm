@@ -10,7 +10,7 @@ RUN dnf install -y \
 COPY dist/*.rpm /tmp/
 
 RUN dnf install -y --setopt=optional_metadata_types=filelists /tmp/*.rpm \
-    && python3 -m pip install --no-cache-dir "pytak>=7.3.10" \
+    && python3 -m pip install --no-cache-dir "pytak[with-crypto]>=7.3.10" \
     && rm -rf /tmp/*.rpm \
     && dnf clean all \
     && python3 -m kraktak --version > /dev/null

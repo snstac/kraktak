@@ -13,7 +13,7 @@ COPY dist/*.deb /tmp/
 
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends /tmp/*.deb \
-    && python3 -m pip install --no-cache-dir --break-system-packages "pytak>=7.3.10" \
+    && python3 -m pip install --no-cache-dir --break-system-packages "pytak[with-crypto]>=7.3.10" \
     && rm -rf /tmp/*.deb /var/lib/apt/lists/* \
     && python3 -m kraktak --version > /dev/null
 
