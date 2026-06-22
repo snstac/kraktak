@@ -1,3 +1,8 @@
+## KrakTAK 10.2.1
+
+- Target-fix renderings (`spi`, `target_range_bearing`, optional `spot_poi`) now
+  delegate to shared [`takline`](https://github.com/snstac/takline) builders.
+
 ## KrakTAK 10.2.0
 
 - Added SkyScanTAK-style assumed-range target fix renderings: `spi`
