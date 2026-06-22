@@ -1,3 +1,11 @@
+## KrakTAK 10.2.0
+
+- Added SkyScanTAK-style assumed-range target fix renderings: `spi`
+  (`b-m-p-s-p-i`, contact + parent link only) and `target_range_bearing`
+  (`u-rb-a` from station to fix). Optional `spot_poi` (`b-m-p-s-m`) remains
+  off unless listed in `COT_TYPES`.
+- Default `COT_TYPES` now includes `spi` and `target_range_bearing`.
+
 ## KrakTAK 10.1.0
 
 - Multi-Kraken support: `KRAKEN_SERVERS` JSON, runtime reload via

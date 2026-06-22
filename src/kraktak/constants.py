@@ -35,8 +35,9 @@ DEFAULT_COT_FAMILY: str = "com.snstac.kraktak"
 DEFAULT_DEVICE_TYPE: str = "KrakenSDR"
 
 # Which CoT renderings to emit per DOA record (comma separated).
-# Options: lob, bearing_line, range_bearing, sensor, cep
-DEFAULT_COT_TYPES: str = "lob,bearing_line"
+# Options: lob, bearing_line, range_bearing, sensor, cep, spi,
+# target_range_bearing, spot_poi
+DEFAULT_COT_TYPES: str = "lob,bearing_line,spi,target_range_bearing"
 
 # Minimum confidence (0-99) and RSSI (dB) required to emit CoT. Empty = no filter.
 DEFAULT_MIN_CONFIDENCE: str = ""

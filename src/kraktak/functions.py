@@ -43,6 +43,16 @@ Debug = bool(os.getenv("DEBUG", ""))
 
 COT_TAG = f"{APP_NAME}-1"
 
+# Kraken station marker (parent for SPI / POI / target R&B links).
+SENSOR_COT_TYPE = "a-f-G-U-C"
+
+# SkyScanTAK-style assumed-range target fix (SPI + optional spot POI + R&B).
+SPI_TARGET_TYPE = "b-m-p-s-p-i"
+SPOT_POI_TYPE = "b-m-p-s-m"
+DEFAULT_SPI_HOW = "m-a"
+DEFAULT_POI_COLOR_ARGB = "-65536"
+DEFAULT_POI_ICONSET = "COT_MAPPING_2525C/a-n/A"
+
 # W3C XMLSchema-instance namespace, used for ``xsi:type`` on signalInfo.
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 
@@ -197,6 +207,38 @@ def _lob_length_m(config) -> float:
     return kraktak.DEFAULT_LOB_LENGTH_M
 
 
+def _target_fix_range_m(config) -> float:
+    """Assumed emitter range (m) for SPI / target R&B; defaults to LOB length."""
+    val = config.get("TARGET_FIX_RANGE_M", "")
+    if val not in ("", None):
+        return float(val)
+    return _lob_length_m(config)
+
+
+def _sensor_uid(data) -> str:
+    return f"{COT_TAG}.KrakenSDR.{data.station}"
+
+
+def _sensor_link_type(config) -> str:
+    return config.get("COT_SENSOR_TYPE", SENSOR_COT_TYPE)
+
+
+def _target_fix_endpoint(data, config) -> Tuple[float, float, float]:
+    """Return (target_lat, target_lon, ground_range_m) along the DOA."""
+    length_m = _target_fix_range_m(config)
+    end_lat, end_lon = calculate_second_point(
+        data.latitude, data.longitude, data.max_doa_angle, length_m
+    )
+    return end_lat, end_lon, length_m
+
+
+def _target_fix_remarks(data) -> str:
+    return (
+        f"DOA {data.max_doa_angle} deg | conf {data.confidence} | "
+        f"rssi {data.rssi} dB"
+    )
+
+
 def _point_attrs(lat: float, lon: float, hae="0.0", ce="9999999.0", le="9999999.0"):
     return {
         "lat": str(lat),
@@ -256,8 +298,8 @@ def doa_to_cot_sensor(data, config=None) -> Optional[ET.Element]:
         Logger.warning("No lat/lon for sensor CoT")
         return None
 
-    uid = f"{COT_TAG}.KrakenSDR.{data.station}"
-    cot = _base_cot(data, config, uid, "a-f-G-U-C", lat, lon)
+    uid = _sensor_uid(data)
+    cot = _base_cot(data, config, uid, SENSOR_COT_TYPE, lat, lon)
 
     detail = ET.Element("detail")
     contact = ET.SubElement(detail, "contact")
@@ -425,6 +467,167 @@ def doa_to_cot_cep(data, config=None) -> Optional[ET.Element]:
     return _swap_detail(cot, detail)
 
 
+def doa_to_cot_spi(data, config=None) -> Optional[ET.Element]:
+    """Sensor Point of Interest at the assumed-range fix (``b-m-p-s-p-i``).
+
+    Contact + parent ``link`` only (no ``<sensor>`` payload on the SPI marker).
+    """
+    config = config or {}
+    lat, lon = data.latitude, data.longitude
+    if lat is None or lon is None:
+        Logger.warning("No lat/lon for SPI CoT")
+        return None
+
+    target_lat, target_lon, _ = _target_fix_endpoint(data, config)
+    uid = f"{COT_TAG}.{data.station}.spi.{data.frequency}"
+    cot_stale = int(config.get("COT_STALE", pytak.DEFAULT_COT_STALE))
+    cot = pytak.gen_cot_xml(
+        lat=str(target_lat),
+        lon=str(target_lon),
+        ce="15.0",
+        le="10.0",
+        hae="0.0",
+        uid=uid,
+        cot_type=SPI_TARGET_TYPE,
+        stale=cot_stale,
+    )
+    cot.set("access", config.get("COT_ACCESS", pytak.DEFAULT_COT_ACCESS))
+    cot.set("how", DEFAULT_SPI_HOW)
+    cot.set("qos", "1-r-c")
+
+    detail = ET.Element("detail")
+    contact = ET.SubElement(detail, "contact")
+    contact.set("callsign", f"KrakenSDR {data.station} SPI {data.frequency} Hz")
+    ET.SubElement(
+        detail,
+        "link",
+        {
+            "uid": _sensor_uid(data),
+            "type": _sensor_link_type(config),
+            "relation": "p-p",
+        },
+    )
+    ET.SubElement(detail, "remarks").text = _target_fix_remarks(data)
+    return _swap_detail(cot, detail)
+
+
+def doa_to_cot_spot_poi(data, config=None) -> Optional[ET.Element]:
+    """Spot-map POI at the assumed-range fix (``b-m-p-s-m``). Opt-in via COT_TYPES."""
+    config = config or {}
+    lat, lon = data.latitude, data.longitude
+    if lat is None or lon is None:
+        Logger.warning("No lat/lon for spot POI CoT")
+        return None
+
+    target_lat, target_lon, _ = _target_fix_endpoint(data, config)
+    uid = f"{COT_TAG}.{data.station}.poi.{data.frequency}"
+    cot_stale = int(config.get("COT_STALE", pytak.DEFAULT_COT_STALE))
+    cot = pytak.gen_cot_xml(
+        lat=str(target_lat),
+        lon=str(target_lon),
+        ce="15.0",
+        le="10.0",
+        hae="0.0",
+        uid=uid,
+        cot_type=SPOT_POI_TYPE,
+        stale=cot_stale,
+    )
+    cot.set("access", config.get("COT_ACCESS", pytak.DEFAULT_COT_ACCESS))
+    cot.set("how", "h-g-i-g-o")
+    cot.set("qos", "1-r-c")
+
+    detail = ET.Element("detail")
+    contact = ET.SubElement(detail, "contact")
+    contact.set(
+        "callsign",
+        f"KrakenSDR {data.station} POI {data.frequency} Hz",
+    )
+    ET.SubElement(
+        detail,
+        "link",
+        {
+            "uid": _sensor_uid(data),
+            "type": _sensor_link_type(config),
+            "relation": "p-p",
+        },
+    )
+    ET.SubElement(detail, "remarks").text = _target_fix_remarks(data)
+    ET.SubElement(
+        detail,
+        "color",
+        {"argb": config.get("COT_POI_COLOR_ARGB", DEFAULT_POI_COLOR_ARGB)},
+    )
+    iconset = config.get("COT_POI_ICONSET", DEFAULT_POI_ICONSET)
+    if iconset:
+        ET.SubElement(detail, "usericon", {"iconsetpath": str(iconset)})
+    ET.SubElement(detail, "archive")
+    return _swap_detail(cot, detail)
+
+
+def doa_to_cot_target_range_bearing(data, config=None) -> Optional[ET.Element]:
+    """``u-rb-a`` from the Kraken station to the assumed-range fix (SkyScanTAK layout)."""
+    config = config or {}
+    lat, lon = data.latitude, data.longitude
+    if lat is None or lon is None:
+        Logger.warning("No lat/lon for target range/bearing CoT")
+        return None
+
+    _, _, range_m = _target_fix_endpoint(data, config)
+    uid = f"{COT_TAG}.{data.station}.target_rb.{data.frequency}"
+    cot_stale = int(config.get("COT_STALE", pytak.DEFAULT_COT_STALE))
+    cot = pytak.gen_cot_xml(
+        lat=str(lat),
+        lon=str(lon),
+        ce="9999999.0",
+        le="9999999.0",
+        hae="0.0",
+        uid=uid,
+        cot_type="u-rb-a",
+        stale=cot_stale,
+    )
+    cot.set("access", config.get("COT_ACCESS", pytak.DEFAULT_COT_ACCESS))
+    cot.set("how", "h-e")
+    cot.set("qos", "1-r-c")
+
+    bearing = float(data.max_doa_angle) % 360.0
+    stroke_color = config.get("COT_TARGET_RB_COLOR", "-65536")
+    stroke_weight = config.get("COT_TARGET_RB_STROKE_WEIGHT", "3.0")
+    callsign = (
+        f"R&B KrakenSDR {data.station} {range_m / 1000.0:.1f}km @ {bearing:.0f}T"
+    )[:200]
+
+    detail = ET.Element("detail")
+    ET.SubElement(
+        detail,
+        "link",
+        {
+            "uid": _sensor_uid(data),
+            "type": _sensor_link_type(config),
+            "relation": "p-p",
+        },
+    )
+    ET.SubElement(detail, "range", {"value": f"{range_m:.6f}"})
+    ET.SubElement(detail, "bearing", {"value": f"{bearing:.6f}"})
+    ET.SubElement(detail, "inclination", {"value": "0.0"})
+    ET.SubElement(detail, "rangeUnits", {"value": "0"})
+    ET.SubElement(detail, "bearingUnits", {"value": "0"})
+    ET.SubElement(detail, "northRef", {"value": "1"})
+    ET.SubElement(detail, "strokeColor", {"value": str(stroke_color)})
+    ET.SubElement(detail, "strokeWeight", {"value": str(stroke_weight)})
+    ET.SubElement(detail, "clamped", {"value": "false"})
+    ET.SubElement(detail, "archive")
+    ET.SubElement(detail, "labels_on", {"value": "false"})
+    ET.SubElement(
+        detail,
+        "color",
+        {"value": str(stroke_color), "argb": str(stroke_color)},
+    )
+    contact = ET.SubElement(detail, "contact")
+    contact.set("callsign", callsign)
+    ET.SubElement(detail, "remarks").text = _target_fix_remarks(data)
+    return _swap_detail(cot, detail)
+
+
 # Map of COT_TYPES tokens -> builder functions.
 COT_BUILDERS = {
     "sensor": doa_to_cot_sensor,
@@ -432,6 +635,9 @@ COT_BUILDERS = {
     "range_bearing": doa_to_cot_range_bearing,
     "lob": doa_to_cot_lob,
     "cep": doa_to_cot_cep,
+    "spi": doa_to_cot_spi,
+    "spot_poi": doa_to_cot_spot_poi,
+    "target_range_bearing": doa_to_cot_target_range_bearing,
 }
 
 

@@ -67,4 +67,4 @@ from .functions import (  # NOQA
 
 from .classes import DOAValues, KrakTAKWorker, parse_doa_csv  # NOQA
 
-__version__ = "10.1.0"
+__version__ = "10.2.0"

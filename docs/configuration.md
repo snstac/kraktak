@@ -23,8 +23,9 @@ etc.) for connecting to a TAK Server.
 
 | Setting | Description | Default |
 | --- | --- | --- |
-| `COT_TYPES` | Comma list of `sensor`, `bearing_line`, `range_bearing`, `lob`, `cep` | `bearing_line,lob` |
-| `LOB_LENGTH_M` | Bearing-line length, meters (`LOB_LENGTH_KM` also accepted) | `10000` |
+| `COT_TYPES` | Comma list of `sensor`, `bearing_line`, `range_bearing`, `lob`, `cep`, `spi`, `target_range_bearing`, `spot_poi` | `lob,bearing_line,spi,target_range_bearing` |
+| `LOB_LENGTH_M` | Bearing-line length, meters (`LOB_LENGTH_KM` also accepted). Default assumed range for `spi` / `target_range_bearing`. | `10000` |
+| `TARGET_FIX_RANGE_M` | Optional override for assumed emitter range used by `spi` / `target_range_bearing` | same as `LOB_LENGTH_M` |
 | `PERSIST_LOB` | Randomize LOB UID so bearings leave a trail | `false` |
 | `CEP_MIN_RADIUS_M` / `CEP_MAX_RADIUS_M` | `cep` ellipse size bounds | `100` / `2000` |
 

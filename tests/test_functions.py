@@ -20,6 +20,9 @@ def _event(out: bytes) -> ET.Element:
         ("range_bearing", "u-rb-a"),
         ("lob", "a-u-G"),
         ("cep", "a-u-G"),
+        ("spi", "b-m-p-s-p-i"),
+        ("spot_poi", "b-m-p-s-m"),
+        ("target_range_bearing", "u-rb-a"),
     ],
 )
 def test_builders_produce_expected_type(doa, builder, cot_type):
@@ -45,6 +48,44 @@ def test_lob_structure(doa):
     assert lob.attrib["unitId"] == "CTIKraken"
     assert lob.find("signalInfo") is not None
     assert lob.find("__startLocation") is not None
+
+
+def test_spi_has_parent_link_without_sensor_payload(doa):
+    event = _event(kraktak.cot_to_xml(doa, {}, "spi"))
+    assert event.attrib["type"] == "b-m-p-s-p-i"
+    assert event.attrib["how"] == "m-a"
+    link = event.find("./detail/link")
+    assert link is not None
+    assert link.attrib["type"] == "a-f-G-U-C"
+    assert link.attrib["relation"] == "p-p"
+    assert event.find("./detail/sensor") is None
+
+
+def test_target_range_bearing_skyscan_layout(doa):
+    event = _event(kraktak.cot_to_xml(doa, {"LOB_LENGTH_M": "15000"}, "target_range_bearing"))
+    assert event.attrib["type"] == "u-rb-a"
+    assert event.find("./point").attrib["hae"] == "0.0"
+    detail = event.find("./detail")
+    assert detail.find("link") is not None
+    assert detail.find("range").attrib["value"] == "15000.000000"
+    assert detail.find("rangeUnits").attrib["value"] == "0"
+    assert detail.find("northRef").attrib["value"] == "1"
+    assert detail.find("clamped") is not None
+
+
+def test_spot_poi_opt_in_only(doa):
+    cfg = {"COT_TYPES": "bearing_line,lob"}
+    assert "spot_poi" not in kraktak.selected_builders(cfg)
+    event = _event(kraktak.cot_to_xml(doa, {}, "spot_poi"))
+    assert event.attrib["type"] == "b-m-p-s-m"
+    assert event.find("./detail/archive") is not None
+
+
+def test_default_cot_types_include_spi_and_target_rb():
+    builders = kraktak.selected_builders({})
+    assert "spi" in builders
+    assert "target_range_bearing" in builders
+    assert "spot_poi" not in builders
 
 
 def test_no_position_returns_none(doa):

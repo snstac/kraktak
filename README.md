@@ -16,7 +16,10 @@ reference set.
 - **Multiple renderings**, selectable via `COT_TYPES`:
   - `bearing_line` - a line of bearing (`u-d-f`) colored by azimuth
   - `lob` - a native TAK `__lob` detection (schema-valid `signalInfo` + `__startLocation`)
-  - `range_bearing` - a TAK Range & Bearing line (`u-rb-a`)
+  - `range_bearing` - a TAK Range & Bearing line (`u-rb-a`) along the LOB length
+  - `spi` - Sensor Point of Interest at the assumed-range fix (`b-m-p-s-p-i`)
+  - `target_range_bearing` - Range & Bearing from the station to that fix (`u-rb-a`)
+  - `spot_poi` - optional spot-map POI at the fix (`b-m-p-s-m`; not enabled by default)
   - `sensor` - the KrakenSDR station marker (`a-f-G-U-C`)
   - `cep` - a `__cep` error ellipse sized from detection confidence
 - **Bi-directional control**: send commands from TAK (GeoChat or a
@@ -72,8 +75,9 @@ the same name (handy for Docker/systemd). Key settings:
 | `POLL_INTERVAL` | DOA poll interval (s) | `3` |
 | `ENABLE_MULTICAST_MIRROR` | Also send CoT to ATAK multicast | `false` |
 | `ENABLE_GPSD` | Use gpsd when DOA has no position | `false` |
-| `COT_TYPES` | Renderings: `sensor,bearing_line,range_bearing,lob,cep` | `bearing_line,lob` |
-| `LOB_LENGTH_M` | Bearing-line length (m) | `10000` |
+| `COT_TYPES` | Renderings: `sensor,bearing_line,range_bearing,lob,cep,spi,target_range_bearing,spot_poi` | `lob,bearing_line,spi,target_range_bearing` |
+| `LOB_LENGTH_M` | Bearing-line length (m). Default assumed range for `spi` / `target_range_bearing`. | `10000` |
+| `TARGET_FIX_RANGE_M` | Optional override for assumed emitter range (`spi` / `target_range_bearing`) | same as `LOB_LENGTH_M` |
 | `MIN_CONFIDENCE` / `MIN_RSSI` | Drop weak detections | unset |
 | `DOA_IGNORE_START` / `DOA_IGNORE_END` | Exclusion wedge (deg) | unset |
 | `ENABLE_CONTROL` | Accept control commands from TAK | `false` |
